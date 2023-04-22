@@ -1,12 +1,11 @@
-# If you prefer the allow list template instead of the deny list, see community template:
-# https://github.com/github/gitignore/blob/main/community/Golang/Go.AllowList.gitignore
-#
 # Binaries for programs and plugins
 *.exe
 *.exe~
 *.dll
 *.so
 *.dylib
+bin
+hack/tools/bin
 
 # Test binary, built with `go test -c`
 *.test
@@ -19,3 +18,20 @@
 
 # Go workspace file
 go.work
+
+# IntelliJ
+.idea/
+*.iml
+
+# VSCode
+.vscode/
+*.code-workspace
+
+# Common editor / temporary files
+*~
+*.tmp
+.DS_Store
+
+# Used during parts of the build process. Files _should_ get cleaned up automatically.
+# This is also a good location for any temporary manfiests used during development
+tmp
