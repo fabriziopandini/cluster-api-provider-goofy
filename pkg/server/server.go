@@ -2,28 +2,35 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
-	"github.com/amahi/spdy"
+	"github.com/emicklei/go-restful/v3"
 	jsonpatch "github.com/evanphx/json-patch/v5"
-	"github.com/gorilla/mux"
+	gportforward "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/server/portforward"
+	"github.com/fabriziopandini/cluster-api-provider-goofy/resources/pki"
+	"github.com/pkg/errors"
 	"io"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/httpstream"
+	"k8s.io/apimachinery/pkg/util/httpstream/spdy"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/tools/portforward"
 	"log"
+	"net"
 	"net/http"
+	"sync"
 	"time"
 )
 
 // TODO: TLS https://medium.com/@satrobit/how-to-build-https-servers-with-certificate-lazy-loading-in-go-bff5e9ef2f1f
 
 type Server struct {
-	scheme *runtime.Scheme
-
-	clusters []string
+	scheme  *runtime.Scheme
+	bufPool *Pool[[]byte]
 
 	started bool
 }
@@ -31,55 +38,70 @@ type Server struct {
 func New(scheme *runtime.Scheme) (*Server, error) {
 	return &Server{
 		scheme: scheme,
+		bufPool: NewPool(func() []byte {
+			return make([]byte, 32*1024)
+		}),
 	}, nil
 }
 
 func (s *Server) Start(ctx context.Context) error {
-	router := mux.NewRouter()
-	apiServer := router.PathPrefix("/clusters").Subrouter()
-	apiServer.Path("/{cluster}/api").Methods("GET").HandlerFunc(s.apiDiscovery)
-	apiServer.Path("/{cluster}/api/v1").Methods("GET").HandlerFunc(s.apiV1Discovery)
-	apiServer.Path("/{cluster}/api/v1/{resource}").Methods("GET").HandlerFunc(s.apiV1List)
-	apiServer.Path("/{cluster}/api/v1/{resource}/{name}").Methods("GET").HandlerFunc(s.apiV1Get)
-	apiServer.Path("/{cluster}/api/v1/{resource}/{name}").Methods("DELETE").HandlerFunc(s.apiV1Delete)
-	apiServer.Path("/{cluster}/api/v1/{resource}/{name}").Methods("PATCH").HandlerFunc(s.apiV1Patch)
-	apiServer.Path("/{cluster}/api/v1/namespaces/{namespace}/{resource}/{name}/portforward").Methods("POST").HandlerFunc(s.apiV1PortForward)
-	apiServer.Path("/{cluster}/apis").Methods("GET").HandlerFunc(s.discoveryApis)
+	apiServer := restful.NewContainer()
+	apiServer.Filter(globalLogging)
 
-	router.PathPrefix("/").HandlerFunc(s.catchAllHandler)
+	ws := new(restful.WebService)
+	ws.Path("/clusters")
+	ws.Consumes(runtime.ContentTypeJSON)
+	ws.Produces(runtime.ContentTypeJSON)
 
-	srv := &http.Server{
-		Addr:    ":8080",
-		Handler: router,
+	ws.Route(ws.GET("/{cluster}/api").To(s.apiDiscovery))
+	ws.Route(ws.GET("/{cluster}/api/v1").To(s.apiV1Discovery))
+	ws.Route(ws.GET("/{cluster}/api/v1/{resource}").To(s.apiV1List))
+	// TODO: create
+	ws.Route(ws.GET("/{cluster}/api/v1/{resource}/{name}").To(s.apiV1Get))
+	ws.Route(ws.PATCH("/{cluster}/api/v1/{resource}/{name}").Consumes(string(types.MergePatchType), string(types.StrategicMergePatchType)).To(s.apiV1Patch))
+	ws.Route(ws.DELETE("/{cluster}/api/v1/{resource}/{name}").Consumes(runtime.ContentTypeProtobuf).To(s.apiV1Delete))
+
+	ws.Route(ws.GET("/{cluster}/api/v1/namespaces/{namespace}/{resource}/foo/portforward").Filter(routeLogging).To(s.apiV1PortForward))
+	ws.Route(ws.POST("/{cluster}/api/v1/namespaces/{namespace}/{resource}/foo/portforward").Consumes("*/*").Filter(routeLogging).To(s.apiV1PortForward))
+
+	ws.Route(ws.GET("/{cluster}/apis").To(s.discoveryApis))
+
+	apiServer.Add(ws)
+
+	cert, err := tls.X509KeyPair(pki.APIServerCertificateData(), pki.APIServerKeyData())
+	if err != nil {
+
 	}
 
-	// Run our server in a goroutine so that it doesn't block.
-	listenAndServe := false
-	go func() {
-		listenAndServe = true
-		if err := srv.ListenAndServe(); err != nil {
-			log.Println(err)
-		}
-	}()
+	srv := &http.Server{
+		Addr:    ":8080", // TODO: make this configurable
+		Handler: apiServer,
+		TLSConfig: &tls.Config{
+			Certificates: []tls.Certificate{cert},
+		},
+	}
 
-	router2 := mux.NewRouter()
-	router2.PathPrefix("/").HandlerFunc(s.catchAllHandler)
-
-	go func() {
-		if err := spdy.ListenAndServe(":8081", router2); err != nil {
-			log.Println(err)
-		}
-
-	}()
-
+	// Handle server shut down via context cancellation.
 	go func() {
 		<-ctx.Done()
 
+		// Use a new context for shutdown, with a timeout for this operation.
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		srv.Shutdown(ctx)
 	}()
 
+	// Run server in a goroutine so that it doesn't block.
+	listenAndServe := false
+	go func() {
+		listenAndServe = true
+
+		if err := srv.ListenAndServeTLS("", ""); err != nil {
+			log.Println(err)
+		}
+	}()
+
+	// Wait for the server to be started.
 	if err := wait.PollImmediate(50*time.Millisecond, 5*time.Second, func() (done bool, err error) {
 		if !listenAndServe {
 			return false, nil
@@ -88,25 +110,38 @@ func (s *Server) Start(ctx context.Context) error {
 	}); err != nil {
 		return fmt.Errorf("failed to start server: %v", err)
 	}
+
+	s.started = true
+
 	return nil
 }
 
-func (s *Server) RegisterCluster(name string) {
-	s.clusters = append(s.clusters, name)
+func globalLogging(req *restful.Request, resp *restful.Response, chain *restful.FilterChain) {
+	log.Printf("[global-filter (logger)] %s,%s %s\n", req.Request.Method, req.Request.URL, req.HeaderParameter("Content-Type"))
+	chain.ProcessFilter(req, resp)
 }
 
-func (s *Server) apiDiscovery(w http.ResponseWriter, r *http.Request) {
-	// vars := mux.Vars(r)
-	// log.Println(vars)
+func routeLogging(req *restful.Request, resp *restful.Response, chain *restful.FilterChain) {
+	log.Printf("[route-filter (logger)] %s,%s\n", req.Request.Method, req.Request.URL)
+	chain.ProcessFilter(req, resp)
+}
+
+func (s *Server) apiDiscovery(req *restful.Request, resp *restful.Response) {
+	// Note: The return value must contain all the API are required by CAPI.
+	// TODO: consider if to make this dynamic, reading APIs from the cache
 	apiVersions := &metav1.APIVersions{
 		Versions: []string{"v1"},
 	}
 
-	s.fprintObj(w, apiVersions, metav1.SchemeGroupVersion)
-	log.Printf("%d %s %s\n", http.StatusOK, r.Method, r.URL.String())
+	if err := resp.WriteEntity(apiVersions); err != nil {
+		_ = resp.WriteErrorString(http.StatusInternalServerError, err.Error())
+		return
+	}
 }
 
-func (s *Server) apiV1Discovery(w http.ResponseWriter, r *http.Request) {
+func (s *Server) apiV1Discovery(req *restful.Request, resp *restful.Response) {
+	// Note: The return value must contain all the API are required by CAPI.
+	// TODO: consider if to make this dynamic, reading APIs from the cache; TBD how to resolve verbs, singular name, categories etc.
 	apiResourceList := &metav1.APIResourceList{
 		GroupVersion: "v1",
 		APIResources: []metav1.APIResource{
@@ -129,11 +164,14 @@ func (s *Server) apiV1Discovery(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	s.fprintObj(w, apiResourceList, metav1.SchemeGroupVersion)
-	log.Printf("%d %s %s\n", http.StatusOK, r.Method, r.URL.String())
+	if err := resp.WriteEntity(apiResourceList); err != nil {
+		_ = resp.WriteErrorString(http.StatusInternalServerError, err.Error())
+		return
+	}
 }
 
-func (s *Server) apiV1List(w http.ResponseWriter, r *http.Request) {
+func (s *Server) apiV1List(req *restful.Request, resp *restful.Response) {
+	// TODO: make this dynamic reading objects from the cache.
 	nodeList := &corev1.NodeList{
 		Items: []corev1.Node{
 			{
@@ -170,11 +208,14 @@ func (s *Server) apiV1List(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	s.fprintObj(w, nodeList, corev1.SchemeGroupVersion)
-	log.Printf("%d %s %s\n", http.StatusOK, r.Method, r.URL.String())
+	if err := resp.WriteEntity(nodeList); err != nil {
+		_ = resp.WriteErrorString(http.StatusInternalServerError, err.Error())
+		return
+	}
 }
 
-func (s *Server) apiV1Get(w http.ResponseWriter, r *http.Request) {
+func (s *Server) apiV1Get(req *restful.Request, resp *restful.Response) {
+	// TODO: make this dynamic reading objects from the cache.
 	node := &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			CreationTimestamp: metav1.Now(),
@@ -207,13 +248,18 @@ func (s *Server) apiV1Get(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	s.fprintObj(w, node, corev1.SchemeGroupVersion)
-	log.Printf("%d %s %s\n", http.StatusOK, r.Method, r.URL.String())
+	if err := resp.WriteEntity(node); err != nil {
+		_ = resp.WriteErrorString(http.StatusInternalServerError, err.Error())
+		return
+	}
 }
 
-func (s *Server) apiV1Patch(w http.ResponseWriter, r *http.Request) {
-	defer r.Body.Close()
-	patchData, _ := io.ReadAll(r.Body)
+func (s *Server) apiV1Patch(req *restful.Request, resp *restful.Response) {
+	// TODO: make this dynamic patching objects into the cache.
+	// TODO: consider if to move patch implementation into the client vs doing patch here and calling upgrade
+
+	defer req.Request.Body.Close()
+	patchData, _ := io.ReadAll(req.Request.Body)
 
 	obj := &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
@@ -249,8 +295,7 @@ func (s *Server) apiV1Patch(w http.ResponseWriter, r *http.Request) {
 
 	encoder, err := s.getEncoder(obj, corev1.SchemeGroupVersion)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprintf(w, err.Error())
+		_ = resp.WriteErrorString(http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -260,21 +305,20 @@ func (s *Server) apiV1Patch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var changedJS []byte
-	patchType := r.Header.Get("Content-Type")
+	patchType := req.HeaderParameter("Content-Type")
 	switch types.PatchType(patchType) {
 	case types.MergePatchType:
 	case types.StrategicMergePatchType:
 
 		changedJS, err = jsonpatch.MergePatch(originalObjJS, patchData)
 		if err != nil {
-
+			_ = resp.WriteErrorString(http.StatusInternalServerError, err.Error())
+			return
 		}
 
 	case types.JSONPatchType:
 	case types.ApplyPatchType:
-		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprintf(w, "unsupported patch type %s\n", patchType)
-		return
+		panic("not supported")
 	}
 
 	codecFactory := serializer.NewCodecFactory(s.scheme)
@@ -283,46 +327,10 @@ func (s *Server) apiV1Patch(w http.ResponseWriter, r *http.Request) {
 
 	}
 
-	s.fprintObj(w, obj, corev1.SchemeGroupVersion)
-	log.Printf("%d %s %s\n", http.StatusOK, r.Method, r.URL.String())
-}
-
-func (s *Server) apiV1PortForward(w http.ResponseWriter, r *http.Request) {
-	log.Printf("%d %s %s\n", http.StatusMovedPermanently, r.Method, r.URL.String())
-	http.Redirect(w, r, "http://localhost:8081", http.StatusMovedPermanently)
-}
-
-func (s *Server) apiV1Delete(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", runtime.ContentTypeJSON)
-	w.WriteHeader(http.StatusOK)
-	log.Printf("%d %s %s\n", http.StatusOK, r.Method, r.URL.String())
-}
-
-func (s *Server) discoveryApis(w http.ResponseWriter, r *http.Request) {
-	apiGroupList := &metav1.APIGroupList{}
-
-	s.fprintObj(w, apiGroupList, metav1.SchemeGroupVersion)
-	log.Printf("%d %s %s\n", http.StatusOK, r.Method, r.URL.String())
-}
-
-func (s *Server) fprintObj(w http.ResponseWriter, obj runtime.Object, gv runtime.GroupVersioner) {
-	encoder, err := s.getEncoder(obj, gv)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprintf(w, err.Error())
+	if err := resp.WriteEntity(obj); err != nil {
+		_ = resp.WriteErrorString(http.StatusInternalServerError, err.Error())
 		return
 	}
-
-	data, err := runtime.Encode(encoder, obj)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprintf(w, "failed to encode %T: %v\n", obj, err)
-		return
-	}
-
-	w.Header().Set("Content-Type", runtime.ContentTypeJSON)
-	w.WriteHeader(http.StatusOK)
-	w.Write(data)
 }
 
 func (s *Server) getEncoder(obj runtime.Object, gv runtime.GroupVersioner) (runtime.Encoder, error) {
@@ -337,7 +345,127 @@ func (s *Server) getEncoder(obj runtime.Object, gv runtime.GroupVersioner) (runt
 	return encoder, nil
 }
 
-func (s *Server) catchAllHandler(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusNotFound)
-	log.Printf("%d %s %s\n", http.StatusNotFound, r.Method, r.URL.String())
+func (s *Server) apiV1Delete(req *restful.Request, resp *restful.Response) {
+	// TODO: make this dynamic deleting objects from the cache.
+}
+
+func (s *Server) discoveryApis(req *restful.Request, resp *restful.Response) {
+	// Note: The return value must contain all the API are required by CAPI.
+	// TODO: consider if to make this dynamic, reading APIs from the cache; TBD how to resolve verbs, singular name, categories etc.
+
+	apiGroupList := &metav1.APIGroupList{}
+
+	if err := resp.WriteEntity(apiGroupList); err != nil {
+		_ = resp.WriteErrorString(http.StatusInternalServerError, err.Error())
+		return
+	}
+}
+
+func (s *Server) apiV1PortForward(req *restful.Request, resp *restful.Response) {
+	request := req.Request
+	respWriter := resp.ResponseWriter
+	_, err := httpstream.Handshake(request, respWriter, []string{portforward.PortForwardProtocolV1Name})
+	if err != nil {
+		panic("")
+	}
+
+	streamChan := make(chan httpstream.Stream, 1)
+
+	upgrader := spdy.NewResponseUpgrader()
+	conn := upgrader.UpgradeResponse(respWriter, request, gportforward.HttpStreamReceived(streamChan))
+	if conn == nil {
+		panic("")
+	}
+	defer func() {
+		_ = conn.Close()
+	}()
+	conn.SetIdleTimeout(10 * time.Minute)
+
+	h := gportforward.NewHttpStreamHandler(
+		conn,
+		streamChan,
+		"podName",
+		"podNamespace",
+		s,
+	)
+	h.Run(context.Background())
+}
+
+func (s *Server) PortForward(ctx context.Context, podName, podNamespace string, port int32, stream io.ReadWriteCloser) error {
+	dial, err := net.Dial("tcp", ":8080") // TODO: compose this
+	if err != nil {
+		return fmt.Errorf("failed to dial %s: %w", ":8080", err)
+	}
+	defer func() {
+		_ = dial.Close()
+	}()
+
+	// TODO: remove this when upgrade to go 1.21 upgrade takes place
+	buf1 := s.bufPool.Get()
+	buf2 := s.bufPool.Get()
+	defer func() {
+		s.bufPool.Put(buf1)
+		s.bufPool.Put(buf2)
+	}()
+	return tunnel(ctx, stream, dial, buf1, buf2)
+}
+
+// tunnel create tunnels for two streams.
+func tunnel(ctx context.Context, c1, c2 io.ReadWriter, buf1, buf2 []byte) error {
+	errCh := make(chan error)
+	go func() {
+		_, err := io.CopyBuffer(c2, c1, buf1)
+		errCh <- err
+	}()
+	go func() {
+		_, err := io.CopyBuffer(c1, c2, buf2)
+		errCh <- err
+	}()
+	select {
+	case <-ctx.Done():
+		// Do nothing
+	case err1 := <-errCh:
+		select {
+		case <-ctx.Done():
+			if err1 != nil {
+				return err1
+			}
+			// Do nothing
+		case err2 := <-errCh:
+			if err1 != nil {
+				return err1
+			}
+			return err2
+		}
+	}
+	if err := ctx.Err(); err != nil && !errors.Is(err, context.Canceled) {
+		return err
+	}
+	return nil
+}
+
+// Pool is a generic pool implementation.
+type Pool[T any] struct {
+	pool sync.Pool
+}
+
+// NewPool creates a new pool.
+func NewPool[T any](new func() T) *Pool[T] {
+	return &Pool[T]{
+		pool: sync.Pool{
+			New: func() any {
+				return new()
+			},
+		},
+	}
+}
+
+// Get gets an item from the pool.
+func (p *Pool[T]) Get() T {
+	return p.pool.Get().(T)
+}
+
+// Put puts an item back to the pool.
+func (p *Pool[T]) Put(v T) {
+	p.pool.Put(v)
 }

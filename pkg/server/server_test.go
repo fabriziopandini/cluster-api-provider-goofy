@@ -4,21 +4,16 @@ import (
 	"context"
 	"crypto/tls"
 	"github.com/fabriziopandini/cluster-api-provider-goofy/pkg/server/proxy"
-	"github.com/gorilla/mux"
+	"github.com/fabriziopandini/cluster-api-provider-goofy/resources/pki"
 	"github.com/stretchr/testify/require"
-	"io"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/util/httpstream"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
-	"log"
-	"net"
-	"net/http"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
-	"sync/atomic"
 	"testing"
 )
 
@@ -30,46 +25,11 @@ func init() {
 }
 
 func TestServer(t *testing.T) {
+	// start a test server and get a client
 	ctx, cancel := context.WithCancel(context.TODO())
 	defer cancel()
 
-	s, err := New(scheme)
-	require.NoError(t, err)
-
-	err = s.Start(ctx)
-	require.NoError(t, err)
-
-	k := clientcmdapi.Config{
-		Clusters: map[string]*clientcmdapi.Cluster{
-			"goofy": {
-				Server: "http://localhost:8080/clusters/test1",
-			},
-		},
-		AuthInfos: map[string]*clientcmdapi.AuthInfo{
-			"goofy": {
-				Username: "goofy",
-			},
-		},
-		Contexts: map[string]*clientcmdapi.Context{
-			"goofy": {
-				Cluster:  "goofy",
-				AuthInfo: "goofy",
-			},
-		},
-		CurrentContext: "goofy",
-	}
-
-	b, err := clientcmd.Write(k)
-	require.NoError(t, err)
-
-	restConfig, err := clientcmd.RESTConfigFromKubeConfig(b)
-	require.NoError(t, err)
-
-	mapper, err := apiutil.NewDynamicRESTMapper(restConfig)
-	require.NoError(t, err)
-
-	c, err := client.New(restConfig, client.Options{Scheme: scheme, Mapper: mapper})
-	require.NoError(t, err)
+	c, _, err := createServerAndGetClient(t, ctx)
 
 	// list
 
@@ -84,6 +44,8 @@ func TestServer(t *testing.T) {
 	require.NoError(t, err)
 
 	// create
+
+	// TODO: create
 
 	// patch
 	// note: strategjc merge patch will behave like traditional patch (ok for the use cases saw so far)
@@ -129,6 +91,61 @@ func TestServer(t *testing.T) {
 	err = c.Delete(context.TODO(), n)
 	require.NoError(t, err)
 
+	cancel()
+}
+
+func createServerAndGetClient(t *testing.T, ctx context.Context) (client.Client, *rest.Config, error) {
+	s, err := New(scheme)
+	require.NoError(t, err)
+
+	err = s.Start(ctx)
+	require.NoError(t, err)
+
+	// Get a client to the server
+	k := clientcmdapi.Config{
+		Clusters: map[string]*clientcmdapi.Cluster{
+			"goofy": {
+				Server:                   "https://localhost:8080/clusters/test1",
+				CertificateAuthorityData: pki.CACertificateData(),
+			},
+		},
+		AuthInfos: map[string]*clientcmdapi.AuthInfo{
+			"goofy": {
+				Username:              "goofy",
+				ClientCertificateData: pki.AdminCertificateData(),
+				ClientKeyData:         pki.AdminKeyData(),
+			},
+		},
+		Contexts: map[string]*clientcmdapi.Context{
+			"goofy": {
+				Cluster:  "goofy",
+				AuthInfo: "goofy",
+			},
+		},
+		CurrentContext: "goofy",
+	}
+
+	b, err := clientcmd.Write(k)
+	require.NoError(t, err)
+
+	restConfig, err := clientcmd.RESTConfigFromKubeConfig(b)
+	require.NoError(t, err)
+
+	mapper, err := apiutil.NewDynamicRESTMapper(restConfig)
+	require.NoError(t, err)
+
+	c, err := client.New(restConfig, client.Options{Scheme: scheme, Mapper: mapper})
+	require.NoError(t, err)
+	return c, restConfig, err
+}
+
+func TestPortForward(t *testing.T) {
+	// start a test server and get a client
+	ctx, cancel := context.WithCancel(context.TODO())
+	defer cancel()
+
+	_, restConfig, err := createServerAndGetClient(t, ctx)
+
 	// port forward
 
 	p := proxy.Proxy{
@@ -152,137 +169,24 @@ func TestServer(t *testing.T) {
 	require.NoError(t, err)
 	defer conn.Close()
 
-	conn.Close()
+	/*
+		fmt.Fprintf(rawConn, "GET /clusters/test1/api HTTP/1.0\r\n\r\n")
+		buf := make([]byte, 5)
+		n, err := rawConn.Read(buf)
+		require.NoError(t, err)
+		fmt.Println("total size:", n, string(buf))
 
-	cancel()
+		fmt.Fprintf(rawConn, "GET /clusters/test1/api HTTP/1.0\r\n\r\n")
+		n, err = rawConn.Read(buf)
+		require.NoError(t, err)
+		fmt.Println("total size:", n, string(buf))
+
+		time.Sleep(5000000 * time.Second)
+	*/
 }
 
-const HeaderSpdy31 = "SPDY/3.1"
+// client --> APIServer -(portforward)-> APIServerPod
 
-func TestPortForward(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.TODO())
-	defer cancel()
+// server (HTTPS APIServer:8080)
 
-	// back end server, the server which ultimately answer to the request
-	router := mux.NewRouter()
-	router.PathPrefix("/clusters/test1/api/v1/namespaces/kube-system/pods/foo/portforward").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-
-		w.Header().Add(httpstream.HeaderConnection, httpstream.HeaderUpgrade)
-		w.Header().Add(httpstream.HeaderUpgrade, HeaderSpdy31)
-
-		w.WriteHeader(http.StatusSwitchingProtocols)
-
-		w.Write([]byte("OK,something !"))
-	})
-	srv := &http.Server{
-		Addr:    ":8080",
-		Handler: router,
-	}
-	go func() {
-		if err := srv.ListenAndServe(); err != nil {
-			log.Println(err)
-		}
-	}()
-
-	// portforward server
-	lb := newLB(t, "127.0.0.1:8080")
-	defer lb.ln.Close()
-	stopCh := make(chan struct{})
-	go lb.serve(stopCh)
-
-	// port forward
-	k := clientcmdapi.Config{
-		Clusters: map[string]*clientcmdapi.Cluster{
-			"goofy": {
-				Server: "http://localhost:8081/clusters/test1",
-			},
-		},
-		AuthInfos: map[string]*clientcmdapi.AuthInfo{
-			"goofy": {
-				Username: "goofy",
-			},
-		},
-		Contexts: map[string]*clientcmdapi.Context{
-			"goofy": {
-				Cluster:  "goofy",
-				AuthInfo: "goofy",
-			},
-		},
-		CurrentContext: "goofy",
-	}
-
-	b, err := clientcmd.Write(k)
-	require.NoError(t, err)
-
-	restConfig, err := clientcmd.RESTConfigFromKubeConfig(b)
-	require.NoError(t, err)
-
-	p := proxy.Proxy{
-		Kind:       "pods",
-		Namespace:  metav1.NamespaceSystem,
-		KubeConfig: restConfig,
-		Port:       8080,
-	}
-
-	dialer, err := proxy.NewDialer(p)
-	require.NoError(t, err)
-
-	rawConn, err := dialer.DialContextWithAddr(ctx, "foo")
-	require.NoError(t, err)
-	defer rawConn.Close()
-
-	// Execute a TLS handshake over the connection to the kube-apiserver.
-	// xref: roughly same code as in tls.DialWithDialer.
-	conn := tls.Client(rawConn, &tls.Config{InsecureSkipVerify: true}) //nolint:gosec // Intentionally not verifying the server cert here.
-	err = conn.HandshakeContext(ctx)
-	require.NoError(t, err)
-	defer conn.Close()
-
-	conn.Close()
-
-	cancel()
-
-}
-
-type tcpLB struct {
-	t         *testing.T
-	ln        net.Listener
-	serverURL string
-	dials     int32
-}
-
-func (lb *tcpLB) handleConnection(in net.Conn, stopCh chan struct{}) {
-	out, err := net.Dial("tcp", lb.serverURL)
-	if err != nil {
-		lb.t.Log(err)
-		return
-	}
-	go io.Copy(out, in)
-	go io.Copy(in, out)
-	<-stopCh
-	if err := out.Close(); err != nil {
-		lb.t.Fatalf("failed to close connection: %v", err)
-	}
-}
-
-func (lb *tcpLB) serve(stopCh chan struct{}) {
-	conn, err := lb.ln.Accept()
-	if err != nil {
-		lb.t.Fatalf("failed to accept: %v", err)
-	}
-	atomic.AddInt32(&lb.dials, 1)
-	go lb.handleConnection(conn, stopCh)
-}
-
-func newLB(t *testing.T, serverURL string) *tcpLB {
-	ln, err := net.Listen("tcp", "127.0.0.1:8081")
-	if err != nil {
-		t.Fatalf("failed to bind: %v", err)
-	}
-	lb := tcpLB{
-		serverURL: serverURL,
-		ln:        ln,
-		t:         t,
-	}
-	return &lb
-}
+// client --> APIServer -(portforward)-> EtcdPod
