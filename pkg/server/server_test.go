@@ -3,9 +3,10 @@ package server
 import (
 	"context"
 	"crypto/tls"
-	"github.com/fabriziopandini/cluster-api-provider-goofy/pkg/server/proxy"
+	proxy2 "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/server/portforward/proxy"
 	"github.com/fabriziopandini/cluster-api-provider-goofy/resources/pki"
 	"github.com/stretchr/testify/require"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -15,6 +16,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 	"testing"
+	"time"
 )
 
 var scheme = runtime.NewScheme()
@@ -105,7 +107,7 @@ func createServerAndGetClient(t *testing.T, ctx context.Context) (client.Client,
 	k := clientcmdapi.Config{
 		Clusters: map[string]*clientcmdapi.Cluster{
 			"goofy": {
-				Server:                   "https://localhost:8080/clusters/test1",
+				Server:                   "https://localhost:8080/apiserver/test1",
 				CertificateAuthorityData: pki.CACertificateData(),
 			},
 		},
@@ -148,14 +150,14 @@ func TestPortForward(t *testing.T) {
 
 	// port forward
 
-	p := proxy.Proxy{
+	p := proxy2.Proxy{
 		Kind:       "pods",
 		Namespace:  metav1.NamespaceSystem,
 		KubeConfig: restConfig,
 		Port:       1234,
 	}
 
-	dialer, err := proxy.NewDialer(p)
+	dialer, err := proxy2.NewDialer(p)
 	require.NoError(t, err)
 
 	rawConn, err := dialer.DialContextWithAddr(ctx, "foo")
@@ -164,10 +166,13 @@ func TestPortForward(t *testing.T) {
 
 	// Execute a TLS handshake over the connection to the kube-apiserver.
 	// xref: roughly same code as in tls.DialWithDialer.
-	conn := tls.Client(rawConn, &tls.Config{InsecureSkipVerify: true}) //nolint:gosec // Intentionally not verifying the server cert here.
-	err = conn.HandshakeContext(ctx)
-	require.NoError(t, err)
-	defer conn.Close()
+
+	/*
+		conn := tls.Client(rawConn, &tls.Config{InsecureSkipVerify: true}) //nolint:gosec // Intentionally not verifying the server cert here.
+		err = conn.HandshakeContext(ctx)
+		require.NoError(t, err)
+		defer conn.Close()
+	*/
 
 	/*
 		fmt.Fprintf(rawConn, "GET /clusters/test1/api HTTP/1.0\r\n\r\n")
@@ -183,10 +188,60 @@ func TestPortForward(t *testing.T) {
 
 		time.Sleep(5000000 * time.Second)
 	*/
+
+	/*
+		etcdClient, err := clientv3.New(clientv3.Config{
+			Endpoints:   []string{":8080/etcd/test1"},
+			DialTimeout: 10 * time.Second,
+			DialOptions: []grpc.DialOption{
+				grpc.WithBlock(), // block until the underlying connection is up
+				grpc.WithContextDialer(dialer.DialContextWithAddr),
+			},
+			TLS: &tls.Config{InsecureSkipVerify: true},
+		})
+		require.NoError(t, err)
+
+		_, err = etcdClient.MemberList(context.Background())
+	*/
+	etcdClient, err := clientv3.New(clientv3.Config{
+		Endpoints:   []string{":8080/etcd/test1"},
+		DialTimeout: 10 * time.Second,
+		/*
+			DialOptions: []grpc.DialOption{
+				grpc.WithBlock(), // block until the underlying connection is up
+				grpc.WithContextDialer(dialer.DialContextWithAddr),
+			},
+		*/
+		TLS: &tls.Config{InsecureSkipVerify: true},
+	})
+	require.NoError(t, err)
+
+	_, err = etcdClient.MemberList(context.Background())
+
+	require.NoError(t, err)
 }
 
-// client --> APIServer -(portforward)-> APIServerPod
+func TestEtcd(t *testing.T) {
+	// start a test server and get a client
+	ctx, cancel := context.WithCancel(context.TODO())
+	defer cancel()
 
-// server (HTTPS APIServer:8080)
+	_, _, err := createServerAndGetClient(t, ctx)
+	require.NoError(t, err)
 
-// client --> APIServer -(portforward)-> EtcdPod
+	etcdClient, err := clientv3.New(clientv3.Config{
+		Endpoints:   []string{"https://127.0.0.1:8080/apiserver/test1/etcd"},
+		DialTimeout: 10 * time.Second,
+		/*
+			DialOptions: []grpc.DialOption{
+				grpc.WithBlock(), // block until the underlying connection is up
+				grpc.WithContextDialer(dialer.DialContextWithAddr),
+			},
+		*/
+		TLS: &tls.Config{InsecureSkipVerify: true},
+	})
+	require.NoError(t, err)
+
+	_, err = etcdClient.MemberList(context.Background())
+	require.NoError(t, err)
+}

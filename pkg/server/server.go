@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"github.com/emicklei/go-restful/v3"
 	jsonpatch "github.com/evanphx/json-patch/v5"
+	"github.com/fabriziopandini/cluster-api-provider-goofy/pkg/server/etcd"
 	gportforward "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/server/portforward"
 	"github.com/fabriziopandini/cluster-api-provider-goofy/resources/pki"
-	"github.com/pkg/errors"
 	"io"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -22,15 +22,13 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"sync"
 	"time"
 )
 
 // TODO: TLS https://medium.com/@satrobit/how-to-build-https-servers-with-certificate-lazy-loading-in-go-bff5e9ef2f1f
 
 type Server struct {
-	scheme  *runtime.Scheme
-	bufPool *Pool[[]byte]
+	scheme *runtime.Scheme
 
 	started bool
 }
@@ -38,9 +36,6 @@ type Server struct {
 func New(scheme *runtime.Scheme) (*Server, error) {
 	return &Server{
 		scheme: scheme,
-		bufPool: NewPool(func() []byte {
-			return make([]byte, 32*1024)
-		}),
 	}, nil
 }
 
@@ -48,25 +43,26 @@ func (s *Server) Start(ctx context.Context) error {
 	apiServer := restful.NewContainer()
 	apiServer.Filter(globalLogging)
 
-	ws := new(restful.WebService)
-	ws.Path("/clusters")
-	ws.Consumes(runtime.ContentTypeJSON)
-	ws.Produces(runtime.ContentTypeJSON)
+	apiServerWS := new(restful.WebService)
+	apiServerWS.Path("/apiserver")
+	apiServerWS.Consumes(runtime.ContentTypeJSON)
+	apiServerWS.Produces(runtime.ContentTypeJSON)
 
-	ws.Route(ws.GET("/{cluster}/api").To(s.apiDiscovery))
-	ws.Route(ws.GET("/{cluster}/api/v1").To(s.apiV1Discovery))
-	ws.Route(ws.GET("/{cluster}/api/v1/{resource}").To(s.apiV1List))
+	apiServerWS.Route(apiServerWS.GET("/{cluster}/api").To(s.apiDiscovery))
+	apiServerWS.Route(apiServerWS.GET("/{cluster}/apis").To(s.discoveryApis))
+	apiServerWS.Route(apiServerWS.GET("/{cluster}/api/v1").To(s.apiV1Discovery))
+
+	apiServerWS.Route(apiServerWS.GET("/{cluster}/api/v1/{resource}").To(s.apiV1List))
 	// TODO: create
-	ws.Route(ws.GET("/{cluster}/api/v1/{resource}/{name}").To(s.apiV1Get))
-	ws.Route(ws.PATCH("/{cluster}/api/v1/{resource}/{name}").Consumes(string(types.MergePatchType), string(types.StrategicMergePatchType)).To(s.apiV1Patch))
-	ws.Route(ws.DELETE("/{cluster}/api/v1/{resource}/{name}").Consumes(runtime.ContentTypeProtobuf).To(s.apiV1Delete))
+	apiServerWS.Route(apiServerWS.GET("/{cluster}/api/v1/{resource}/{name}").To(s.apiV1Get))
+	apiServerWS.Route(apiServerWS.PATCH("/{cluster}/api/v1/{resource}/{name}").Consumes(string(types.MergePatchType), string(types.StrategicMergePatchType)).To(s.apiV1Patch))
+	apiServerWS.Route(apiServerWS.DELETE("/{cluster}/api/v1/{resource}/{name}").Consumes(runtime.ContentTypeProtobuf).To(s.apiV1Delete))
 
-	ws.Route(ws.GET("/{cluster}/api/v1/namespaces/{namespace}/{resource}/foo/portforward").Filter(routeLogging).To(s.apiV1PortForward))
-	ws.Route(ws.POST("/{cluster}/api/v1/namespaces/{namespace}/{resource}/foo/portforward").Consumes("*/*").Filter(routeLogging).To(s.apiV1PortForward))
+	apiServerWS.Route(apiServerWS.GET("/{cluster}/api/v1/namespaces/{namespace}/pods/{name}/portforward").To(s.apiV1PortForward))
+	apiServerWS.Route(apiServerWS.POST("/{cluster}/api/v1/namespaces/{namespace}/pods/{name}/portforward").Consumes("*/*").To(s.apiV1PortForward))
+	apiServerWS.Route(apiServerWS.GET("/{cluster}/etcd").Filter(routeLogging).To(s.etcd))
 
-	ws.Route(ws.GET("/{cluster}/apis").To(s.discoveryApis))
-
-	apiServer.Add(ws)
+	apiServer.Add(apiServerWS)
 
 	cert, err := tls.X509KeyPair(pki.APIServerCertificateData(), pki.APIServerKeyData())
 	if err != nil {
@@ -362,36 +358,62 @@ func (s *Server) discoveryApis(req *restful.Request, resp *restful.Response) {
 }
 
 func (s *Server) apiV1PortForward(req *restful.Request, resp *restful.Response) {
+	// In order to handle a port forward request the current connection has to be upgraded
+	// in order to become compliant with the spyd protocol.
+	// This implies two steps:
+	// - Adding support for handling multiple http streams, used for subsequent operations over
+	//   the forwarded connection.
+	// - Opening a connection to the target endpoint, the endpoint to port forward to, and setting up
+	//   a bi-directional copy of data because the server acts as a man in the middle.
+
+	// Perform a sub protocol negotiation, ensuring tha client and the server agree on how
+	// to handle communications over the port forwarded connection.
 	request := req.Request
 	respWriter := resp.ResponseWriter
 	_, err := httpstream.Handshake(request, respWriter, []string{portforward.PortForwardProtocolV1Name})
 	if err != nil {
-		panic("")
+		panic("error handling not implemented")
 	}
 
+	// Create a channel where to handle http streams that will be generated for each subsequent
+	// operations over the port forwarded connection.
 	streamChan := make(chan httpstream.Stream, 1)
 
+	// Upgrade the connection specifying what to do when a new http stream is received.
+	// After being received, the new stream will be published into the stream channel for handling.
 	upgrader := spdy.NewResponseUpgrader()
 	conn := upgrader.UpgradeResponse(respWriter, request, gportforward.HttpStreamReceived(streamChan))
 	if conn == nil {
-		panic("")
+		panic("error handling not implemented")
 	}
 	defer func() {
 		_ = conn.Close()
 	}()
 	conn.SetIdleTimeout(10 * time.Minute)
 
+	// Start the process handling streams that are published in the stream channel, please note that:
+	// - TODO: describe when port forwarder is called
 	h := gportforward.NewHttpStreamHandler(
 		conn,
 		streamChan,
-		"podName",
-		"podNamespace",
-		s,
+		req.PathParameter("name"), // name of the Pod to forward to
+		req.PathParameter("namespace"),
+		portForwarder,
 	)
 	h.Run(context.Background())
 }
 
-func (s *Server) PortForward(ctx context.Context, podName, podNamespace string, port int32, stream io.ReadWriteCloser) error {
+// portForwarder handle a single port
+func portForwarder(ctx context.Context, podName, podNamespace string, port int32, stream io.ReadWriteCloser) error {
+	// Given that in the goofy provider there is no real infrastructure, there isn't also
+	// a real workload cluster, nor real pods to forward to.
+	// Se, for faking a real workload cluster behaviour we are forwarding the connection back to the
+	// same server that is implementing the fake API server for all the clusters (the goofy controller pod).
+	//
+	// This works without additional efforts for the port forward that kcp is doing th check
+	// certificate expiration for the apiServer; TBD for etcd.
+
+	// Get a connection to the target of the port forward operation.
 	dial, err := net.Dial("tcp", ":8080") // TODO: compose this
 	if err != nil {
 		return fmt.Errorf("failed to dial %s: %w", ":8080", err)
@@ -400,72 +422,13 @@ func (s *Server) PortForward(ctx context.Context, podName, podNamespace string, 
 		_ = dial.Close()
 	}()
 
-	// TODO: remove this when upgrade to go 1.21 upgrade takes place
-	buf1 := s.bufPool.Get()
-	buf2 := s.bufPool.Get()
-	defer func() {
-		s.bufPool.Put(buf1)
-		s.bufPool.Put(buf2)
-	}()
-	return tunnel(ctx, stream, dial, buf1, buf2)
+	// Create a tunnel for bi-directional copy of data between the stream
+	// originated from the initiator of the port forward operation and the target.
+	return gportforward.HttpStreamTunnel(ctx, stream, dial)
 }
 
-// tunnel create tunnels for two streams.
-func tunnel(ctx context.Context, c1, c2 io.ReadWriter, buf1, buf2 []byte) error {
-	errCh := make(chan error)
-	go func() {
-		_, err := io.CopyBuffer(c2, c1, buf1)
-		errCh <- err
-	}()
-	go func() {
-		_, err := io.CopyBuffer(c1, c2, buf2)
-		errCh <- err
-	}()
-	select {
-	case <-ctx.Done():
-		// Do nothing
-	case err1 := <-errCh:
-		select {
-		case <-ctx.Done():
-			if err1 != nil {
-				return err1
-			}
-			// Do nothing
-		case err2 := <-errCh:
-			if err1 != nil {
-				return err1
-			}
-			return err2
-		}
-	}
-	if err := ctx.Err(); err != nil && !errors.Is(err, context.Canceled) {
-		return err
-	}
-	return nil
-}
+func (s *Server) etcd(req *restful.Request, resp *restful.Response) {
 
-// Pool is a generic pool implementation.
-type Pool[T any] struct {
-	pool sync.Pool
-}
+	etcd.NewEtcdServer().ServeHTTP(resp.ResponseWriter, req.Request)
 
-// NewPool creates a new pool.
-func NewPool[T any](new func() T) *Pool[T] {
-	return &Pool[T]{
-		pool: sync.Pool{
-			New: func() any {
-				return new()
-			},
-		},
-	}
-}
-
-// Get gets an item from the pool.
-func (p *Pool[T]) Get() T {
-	return p.pool.Get().(T)
-}
-
-// Put puts an item back to the pool.
-func (p *Pool[T]) Put(v T) {
-	p.pool.Put(v)
 }
