@@ -3,18 +3,28 @@ package server
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
+	"fmt"
+	"github.com/fabriziopandini/cluster-api-provider-goofy/pkg/server/api"
+	"github.com/fabriziopandini/cluster-api-provider-goofy/pkg/server/etcd"
+	"github.com/fabriziopandini/cluster-api-provider-goofy/pkg/server/mux"
 	proxy2 "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/server/portforward/proxy"
 	"github.com/fabriziopandini/cluster-api-provider-goofy/resources/pki"
 	"github.com/stretchr/testify/require"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/h2c"
+	"google.golang.org/grpc"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
+	"net/http"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
+	"strings"
 	"testing"
 	"time"
 )
@@ -27,87 +37,126 @@ func init() {
 }
 
 func TestServer(t *testing.T) {
-	// start a test server and get a client
-	ctx, cancel := context.WithCancel(context.TODO())
-	defer cancel()
+	serverCert, err := tls.X509KeyPair(pki.APIServerCertificateData(), pki.APIServerKeyData())
+	require.NoError(t, err)
 
-	c, _, err := createServerAndGetClient(t, ctx)
+	tlsConfig := &tls.Config{
+		Certificates: []tls.Certificate{serverCert},
+	}
 
-	// list
+	apiHandler := api.NewAPIServerHandler(scheme)
+	etcHandler := etcd.NewEtcdServerHandler()
+
+	mixedHandler := newMixedHandler(apiHandler, etcHandler)
+
+	server := mux.NewServer("127.0.0.1", tlsConfig, mixedHandler)
+
+	service1, err := server.AddService()
+	require.NoError(t, err)
+
+	err = server.StartService(service1.Address())
+	require.NoError(t, err)
+
+	c, _, err := getClient(t, service1)
+	require.NoError(t, err)
 
 	nl := &corev1.NodeList{}
 	err = c.List(context.TODO(), nl)
 	require.NoError(t, err)
-
-	// get
-
-	n := &corev1.Node{}
-	err = c.Get(context.TODO(), client.ObjectKey{Name: "foo"}, n)
-	require.NoError(t, err)
-
-	// create
-
-	// TODO: create
-
-	// patch
-	// note: strategjc merge patch will behave like traditional patch (ok for the use cases saw so far)
-	//       ssa patch will behave like traditional patch or something similar.
-
-	n2 := n.DeepCopy()
-	n2.Annotations = map[string]string{"foo": "bar"}
-	err = c.Patch(context.TODO(), n2, client.MergeFrom(n))
-	require.NoError(t, err)
-
-	n3 := n2.DeepCopy()
-	taints := []corev1.Taint{}
-	for _, taint := range n.Spec.Taints {
-		if taint.Key == "foo" {
-			continue
-		}
-		taints = append(taints, taint)
-	}
-	n3.Spec.Taints = taints
-	err = c.Patch(context.TODO(), n3, client.StrategicMergeFrom(n2))
-	require.NoError(t, err)
-
-	/*
-		n4 := n.DeepCopy()
-		patchOptions := []client.PatchOption{
-			client.ForceOwnership,
-			client.FieldOwner("obj-manager"),
-			client.DryRunAll,
-		}
-		err = c.Patch(ctx, n4, client.Apply, patchOptions...)
-		require.NoError(t, err)
-
-		patchOptions = []client.PatchOption{
-			client.ForceOwnership,
-			client.FieldOwner("obj-manager"),
-		}
-		err = c.Patch(ctx, n4, client.Apply, patchOptions...)
-		require.NoError(t, err)
-	*/
-
-	// delete
-
-	err = c.Delete(context.TODO(), n)
-	require.NoError(t, err)
-
-	cancel()
 }
 
-func createServerAndGetClient(t *testing.T, ctx context.Context) (client.Client, *rest.Config, error) {
-	s, err := New(scheme)
+func TestServer2(t *testing.T) {
+	serverCert, err := tls.X509KeyPair(pki.APIServerCertificateData(), pki.APIServerKeyData())
 	require.NoError(t, err)
 
-	err = s.Start(ctx)
+	tlsConfig := &tls.Config{
+		// Certificates: []tls.Certificate{serverCert},
+		GetCertificate: func(info *tls.ClientHelloInfo) (*tls.Certificate, error) {
+			fmt.Printf("local addr %s\n", info.Conn.LocalAddr())
+			return &serverCert, nil
+		},
+	}
+
+	apiHandler := api.NewAPIServerHandler(scheme)
+	etcHandler := etcd.NewEtcdServerHandler()
+
+	mixedHandler := newMixedHandler(apiHandler, etcHandler)
+
+	server := mux.NewServer("127.0.0.1", tlsConfig, mixedHandler)
+
+	service1, err := server.AddService()
 	require.NoError(t, err)
 
+	err = server.StartService(service1.Address())
+	require.NoError(t, err)
+
+	service2, err := server.AddService()
+	require.NoError(t, err)
+
+	err = server.StartService(service2.Address())
+	require.NoError(t, err)
+
+	_, restConfig, err := getClient(t, service1)
+	require.NoError(t, err)
+
+	clientCert, err := tls.X509KeyPair(pki.AdminCertificateData(), pki.AdminKeyData())
+	require.NoError(t, err)
+
+	caPool := x509.NewCertPool()
+	caPool.AppendCertsFromPEM(pki.CACertificateData())
+
+	p := proxy2.Proxy{
+		Kind:       "pods",
+		Namespace:  metav1.NamespaceSystem,
+		KubeConfig: restConfig,
+		Port:       service2.Port(),
+	}
+
+	dialer, err := proxy2.NewDialer(p)
+	require.NoError(t, err)
+
+	etcdClient1, err := clientv3.New(clientv3.Config{
+		Endpoints:   []string{"kubernetes"},
+		DialTimeout: 2 * time.Second,
+
+		DialOptions: []grpc.DialOption{
+			grpc.WithBlock(), // block until the underlying connection is up
+			grpc.WithContextDialer(dialer.DialContextWithAddr),
+		},
+		TLS: &tls.Config{
+			RootCAs:      caPool,
+			Certificates: []tls.Certificate{clientCert},
+			MinVersion:   tls.VersionTLS12,
+		},
+	})
+	require.NoError(t, err)
+
+	_, err = etcdClient1.MemberList(context.Background())
+	require.NoError(t, err)
+
+	err = etcdClient1.Close()
+	require.NoError(t, err)
+}
+
+func newMixedHandler(httpHand http.Handler, grpcHandler http.Handler) http.Handler {
+	mixedHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.ProtoMajor == 2 && strings.HasPrefix(r.Header.Get("content-type"), "application/grpc") {
+			grpcHandler.ServeHTTP(w, r)
+			return
+		}
+		httpHand.ServeHTTP(w, r)
+	})
+
+	return h2c.NewHandler(mixedHandler, &http2.Server{})
+}
+
+// TODO: move into API, split into RestConfig and Client
+func getClient(t *testing.T, service *mux.Service) (client.Client, *rest.Config, error) {
 	// Get a client to the server
 	k := clientcmdapi.Config{
 		Clusters: map[string]*clientcmdapi.Cluster{
 			"goofy": {
-				Server:                   "https://localhost:8080/apiserver/test1",
+				Server:                   fmt.Sprintf("https://localhost:%d/apiserver/test1", service.Port()),
 				CertificateAuthorityData: pki.CACertificateData(),
 			},
 		},
@@ -139,109 +188,4 @@ func createServerAndGetClient(t *testing.T, ctx context.Context) (client.Client,
 	c, err := client.New(restConfig, client.Options{Scheme: scheme, Mapper: mapper})
 	require.NoError(t, err)
 	return c, restConfig, err
-}
-
-func TestPortForward(t *testing.T) {
-	// start a test server and get a client
-	ctx, cancel := context.WithCancel(context.TODO())
-	defer cancel()
-
-	_, restConfig, err := createServerAndGetClient(t, ctx)
-
-	// port forward
-
-	p := proxy2.Proxy{
-		Kind:       "pods",
-		Namespace:  metav1.NamespaceSystem,
-		KubeConfig: restConfig,
-		Port:       1234,
-	}
-
-	dialer, err := proxy2.NewDialer(p)
-	require.NoError(t, err)
-
-	rawConn, err := dialer.DialContextWithAddr(ctx, "foo")
-	require.NoError(t, err)
-	defer rawConn.Close()
-
-	// Execute a TLS handshake over the connection to the kube-apiserver.
-	// xref: roughly same code as in tls.DialWithDialer.
-
-	/*
-		conn := tls.Client(rawConn, &tls.Config{InsecureSkipVerify: true}) //nolint:gosec // Intentionally not verifying the server cert here.
-		err = conn.HandshakeContext(ctx)
-		require.NoError(t, err)
-		defer conn.Close()
-	*/
-
-	/*
-		fmt.Fprintf(rawConn, "GET /clusters/test1/api HTTP/1.0\r\n\r\n")
-		buf := make([]byte, 5)
-		n, err := rawConn.Read(buf)
-		require.NoError(t, err)
-		fmt.Println("total size:", n, string(buf))
-
-		fmt.Fprintf(rawConn, "GET /clusters/test1/api HTTP/1.0\r\n\r\n")
-		n, err = rawConn.Read(buf)
-		require.NoError(t, err)
-		fmt.Println("total size:", n, string(buf))
-
-		time.Sleep(5000000 * time.Second)
-	*/
-
-	/*
-		etcdClient, err := clientv3.New(clientv3.Config{
-			Endpoints:   []string{":8080/etcd/test1"},
-			DialTimeout: 10 * time.Second,
-			DialOptions: []grpc.DialOption{
-				grpc.WithBlock(), // block until the underlying connection is up
-				grpc.WithContextDialer(dialer.DialContextWithAddr),
-			},
-			TLS: &tls.Config{InsecureSkipVerify: true},
-		})
-		require.NoError(t, err)
-
-		_, err = etcdClient.MemberList(context.Background())
-	*/
-	etcdClient, err := clientv3.New(clientv3.Config{
-		Endpoints:   []string{":8080/etcd/test1"},
-		DialTimeout: 10 * time.Second,
-		/*
-			DialOptions: []grpc.DialOption{
-				grpc.WithBlock(), // block until the underlying connection is up
-				grpc.WithContextDialer(dialer.DialContextWithAddr),
-			},
-		*/
-		TLS: &tls.Config{InsecureSkipVerify: true},
-	})
-	require.NoError(t, err)
-
-	_, err = etcdClient.MemberList(context.Background())
-
-	require.NoError(t, err)
-}
-
-func TestEtcd(t *testing.T) {
-	// start a test server and get a client
-	ctx, cancel := context.WithCancel(context.TODO())
-	defer cancel()
-
-	_, _, err := createServerAndGetClient(t, ctx)
-	require.NoError(t, err)
-
-	etcdClient, err := clientv3.New(clientv3.Config{
-		Endpoints:   []string{"https://127.0.0.1:8080/apiserver/test1/etcd"},
-		DialTimeout: 10 * time.Second,
-		/*
-			DialOptions: []grpc.DialOption{
-				grpc.WithBlock(), // block until the underlying connection is up
-				grpc.WithContextDialer(dialer.DialContextWithAddr),
-			},
-		*/
-		TLS: &tls.Config{InsecureSkipVerify: true},
-	})
-	require.NoError(t, err)
-
-	_, err = etcdClient.MemberList(context.Background())
-	require.NoError(t, err)
 }

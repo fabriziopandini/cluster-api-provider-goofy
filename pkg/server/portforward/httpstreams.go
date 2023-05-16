@@ -66,7 +66,7 @@ type httpStreamHandler struct {
 }
 
 // PortForwarder knows how to forward content from a data stream to/from a target (usually a port in a pod).
-type PortForwarder func(ctx context.Context, podName, podNamespace string, port int32, stream io.ReadWriteCloser) error
+type PortForwarder func(ctx context.Context, podName, podNamespace, port string, stream io.ReadWriteCloser) error
 
 // Run is the main loop for the HttpStreamHandler. It processes new
 // streams, invoking portForward for each complete stream pair. The loop exits
@@ -206,15 +206,14 @@ func (h *httpStreamHandler) portForward(ctx context.Context, p *httpStreamPair) 
 		_ = p.dataStream.Close()
 	}()
 
-	portString := p.dataStream.Headers().Get(corev1.PortHeader)
-	port, _ := strconv.ParseInt(portString, 10, 32)
+	port := p.dataStream.Headers().Get(corev1.PortHeader)
 
-	log.Println("Connection request invoking forwarder.PortForward for port", "connection", h.conn, "request", p.requestID, "port", portString)
-	err := h.forwarder(ctx, h.podName, h.podNamespace, int32(port), p.dataStream)
-	log.Println("Connection request done invoking forwarder.PortForward for port", "connection", h.conn, "request", p.requestID, "port", portString)
+	log.Println("Connection request invoking forwarder.PortForward for port", "connection", h.conn, "request", p.requestID, "port", port)
+	err := h.forwarder(ctx, h.podName, h.podNamespace, port, p.dataStream)
+	log.Println("Connection request done invoking forwarder.PortForward for port", "connection", h.conn, "request", p.requestID, "port", port)
 
 	if err != nil {
-		err := fmt.Errorf("error forwarding port %d to pod %s/%s: %w", port, h.podNamespace, h.podName, err)
+		err := fmt.Errorf("error forwarding port %s to pod %s/%s: %w", port, h.podNamespace, h.podName, err)
 		log.Println("PortForward", err.Error())
 		fmt.Fprint(p.errorStream, err.Error())
 	}

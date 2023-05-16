@@ -5,7 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
-	"github.com/fabriziopandini/cluster-api-provider-goofy/pkg/server/proxy"
+	"github.com/fabriziopandini/cluster-api-provider-goofy/pkg/server/mux"
 	"github.com/fabriziopandini/cluster-api-provider-goofy/resources/pki"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/require"
@@ -225,7 +225,7 @@ func TestEtcd3TLS(t *testing.T) {
 		Certificates: []tls.Certificate{serverCert},
 	}
 
-	http1Server := proxy.NewServer("127.0.0.1", tlsConfig, grpcServ)
+	server := mux.NewServer("127.0.0.1", tlsConfig, grpcServ)
 
 	// service 1 + test
 
@@ -236,10 +236,10 @@ func TestEtcd3TLS(t *testing.T) {
 	caPool.AppendCertsFromPEM(pki.CACertificateData())
 
 	for i := 1; i <= 10; i++ {
-		service1, err := http1Server.AddService()
+		service1, err := server.AddService()
 		require.NoError(t, err)
 
-		err = http1Server.StartService(service1.Address())
+		err = server.StartService(service1.Address())
 		require.NoError(t, err)
 
 		etcdClient1, err := clientv3.New(clientv3.Config{
@@ -266,7 +266,7 @@ func TestEtcd3TLS(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	err = http1Server.Shutdown(context.Background())
+	err = server.Shutdown(context.Background())
 	require.NoError(t, err)
 }
 

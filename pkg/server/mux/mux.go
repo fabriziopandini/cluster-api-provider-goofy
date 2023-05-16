@@ -1,4 +1,4 @@
-package proxy
+package mux
 
 import (
 	"context"
@@ -18,7 +18,7 @@ const (
 	maxPort = 28000
 )
 
-type Server struct {
+type Mux struct {
 	host      string
 	minPort   int // TODO: move port management to a port range type
 	maxPort   int
@@ -30,8 +30,8 @@ type Server struct {
 	lock sync.RWMutex
 }
 
-func NewServer(host string, tlsConfig *tls.Config, handler http.Handler) *Server {
-	return &Server{
+func NewServer(host string, tlsConfig *tls.Config, handler http.Handler) *Mux {
+	return &Mux{
 		host:      host,
 		minPort:   minPort,
 		maxPort:   maxPort,
@@ -45,7 +45,7 @@ func NewServer(host string, tlsConfig *tls.Config, handler http.Handler) *Server
 	}
 }
 
-func (s *Server) AddService() (*Service, error) {
+func (s *Mux) AddService() (*Service, error) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
@@ -66,7 +66,7 @@ func (s *Server) AddService() (*Service, error) {
 	return service, nil
 }
 
-func (s *Server) StartService(address string) error {
+func (s *Mux) StartService(address string) error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
@@ -101,7 +101,7 @@ func (s *Server) StartService(address string) error {
 	return startErr
 }
 
-func (s *Server) Shutdown(ctx context.Context) error {
+func (s *Mux) Shutdown(ctx context.Context) error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
@@ -109,7 +109,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	return s.server.Shutdown(ctx)
 }
 
-func (s *Server) getFreePortNoLock() (int, error) {
+func (s *Mux) getFreePortNoLock() (int, error) {
 	port := s.portIndex
 	if port > s.maxPort {
 		return -1, errors.Errorf("no more free ports in the %d-%d range", minPort, maxPort)
@@ -124,6 +124,14 @@ type Service struct {
 	port int
 
 	listener net.Listener
+}
+
+func (s *Service) Host() string {
+	return s.host
+}
+
+func (s *Service) Port() int {
+	return s.port
 }
 
 func (s *Service) Address() string {

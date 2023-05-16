@@ -2,22 +2,18 @@ package etcd
 
 import (
 	"context"
-	"github.com/fabriziopandini/cluster-api-provider-goofy/resources/pki"
+	"fmt"
 	pb "go.etcd.io/etcd/api/v3/etcdserverpb"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
-	"log"
+	"google.golang.org/grpc/metadata"
 	"net/http"
 )
 
-func NewEtcdServer() http.Handler {
-	creds, err := credentials.NewServerTLSFromFile(string(pki.APIServerCertificateData()), string(pki.APIServerKeyData()))
-	if err != nil {
-		log.Fatalf("Failed to setup TLS: %v", err)
-	}
+func NewEtcdServerHandler() http.Handler {
+	svr := grpc.NewServer()
 
-	svr := grpc.NewServer(grpc.Creds(creds))
-	pb.RegisterClusterServer(svr, &clusterServerService{})
+	mySvc := &clusterServerService{}
+	pb.RegisterClusterServer(svr, mySvc)
 
 	return svr
 }
@@ -41,14 +37,15 @@ func (c clusterServerService) MemberUpdate(ctx context.Context, request *pb.Memb
 }
 
 func (c clusterServerService) MemberList(ctx context.Context, request *pb.MemberListRequest) (*pb.MemberListResponse, error) {
-	// TODO implement me
-	/*
-		md, ok := metadata.FromIncomingContext(ctx)
-		if !ok {
 
-		}
-		 fmt.Println("Works!", md.Get(":authority"))
-	*/
+	localAddr := ctx.Value(http.LocalAddrContextKey)
+	// TODO it is required to figure out how to go back to a cluster/pod
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+
+	}
+	fmt.Println("Works!", md.Get(":authority"), localAddr)
+
 	return &pb.MemberListResponse{}, nil
 }
 
