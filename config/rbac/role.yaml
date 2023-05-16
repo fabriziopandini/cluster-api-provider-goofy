@@ -6,28 +6,9 @@ metadata:
   name: manager-role
 rules:
 - apiGroups:
-  - ""
-  resources:
-  - secrets
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
   - cluster.x-k8s.io
   resources:
   - clusters
-  - machines
-  - machinesets
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - cluster.x-k8s.io
-  resources:
-  - machinepools
-  - machinepools/status
   verbs:
   - get
   - list
@@ -35,7 +16,7 @@ rules:
 - apiGroups:
   - infrastructure.cluster.x-k8s.io
   resources:
-  - dockerclusters
+  - goofyclusters
   verbs:
   - create
   - delete
@@ -47,50 +28,8 @@ rules:
 - apiGroups:
   - infrastructure.cluster.x-k8s.io
   resources:
-  - dockerclusters/finalizers
-  - dockerclusters/status
-  verbs:
-  - get
-  - patch
-  - update
-- apiGroups:
-  - infrastructure.cluster.x-k8s.io
-  resources:
-  - dockermachinepools
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - infrastructure.cluster.x-k8s.io
-  resources:
-  - dockermachinepools/finalizers
-  - dockermachinepools/status
-  verbs:
-  - get
-  - patch
-  - update
-- apiGroups:
-  - infrastructure.cluster.x-k8s.io
-  resources:
-  - dockermachines
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - infrastructure.cluster.x-k8s.io
-  resources:
-  - dockermachines/finalizers
-  - dockermachines/status
+  - goofyclusters/finalizers
+  - goofyclusters/status
   verbs:
   - get
   - patch
