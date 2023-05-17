@@ -3,6 +3,10 @@ package cache
 import (
 	"context"
 	"fmt"
+	"strings"
+	"sync"
+	"time"
+
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -12,9 +16,6 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
-	"strings"
-	"sync"
-	"time"
 )
 
 // TODO: consider if to move to internal
@@ -115,7 +116,7 @@ func (c *cache) Start(ctx context.Context) error {
 		return fmt.Errorf("cache started more than once")
 	}
 
-	log.Info("Staring cache")
+	log.Info("Starting cache")
 
 	if err := c.startGarbageCollector(ctx); err != nil {
 		return nil
@@ -130,8 +131,8 @@ func (c *cache) Start(ctx context.Context) error {
 }
 
 func (c *cache) AddResourceGroup(name string) {
-	c.lock.RLock()
-	defer c.lock.RUnlock()
+	c.lock.Lock()
+	defer c.lock.Unlock()
 	if _, ok := c.resourceGroups[name]; ok {
 		return
 	}
@@ -143,8 +144,8 @@ func (c *cache) AddResourceGroup(name string) {
 }
 
 func (c *cache) DeleteResourceGroup(name string) {
-	c.lock.RLock()
-	defer c.lock.RUnlock()
+	c.lock.Lock()
+	defer c.lock.Unlock()
 	delete(c.resourceGroups, name)
 }
 

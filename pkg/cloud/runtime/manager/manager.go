@@ -90,7 +90,7 @@ func (m *manager) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to start cache: %v", err)
 	}
 
-	log.Info("Staring manager")
+	log.Info("Starting manager")
 	for _, c := range m.controllers {
 		if err := c.Start(ctx); err != nil {
 			return fmt.Errorf("failed to start controllers: %v", err)
