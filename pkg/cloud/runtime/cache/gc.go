@@ -68,6 +68,7 @@ func (c *cache) processGarbageCollectorWorkItem(ctx context.Context) bool {
 		return false
 	}
 
+	// TODO(Fabrizio): Why are we calling the same in defer and directly
 	defer func() {
 		c.garbageCollectorQueue.Done(item)
 	}()

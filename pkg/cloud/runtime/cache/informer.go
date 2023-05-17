@@ -12,6 +12,7 @@ type informer struct {
 }
 
 func (i *informer) AddEventHandler(handler InformEventHandler) error {
+	// TODO(fabrizio): we probably should lock here as well. TBD If c.lock or a separate one
 	i.handlers = append(i.handlers, handler)
 	return nil
 }

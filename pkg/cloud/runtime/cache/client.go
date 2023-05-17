@@ -2,6 +2,8 @@ package cache
 
 import (
 	"fmt"
+	"time"
+
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -10,7 +12,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"time"
 )
 
 func (c *cache) Get(resourceGroup string, key client.ObjectKey, obj client.Object) error {
@@ -195,18 +196,18 @@ func (c *cache) store(resourceGroup string, obj client.Object, replaceExisting b
 	return nil
 }
 
-func updateTrackerOwnerReferences(tracker *resourceGroupTracker, trackedObj client.Object, obj client.Object, objRef ownReference) {
-	if trackedObj != nil {
-		for _, oldO := range trackedObj.GetOwnerReferences() {
+func updateTrackerOwnerReferences(tracker *resourceGroupTracker, oldObj client.Object, newObj client.Object, objRef ownReference) {
+	if oldObj != nil {
+		for _, oldO := range oldObj.GetOwnerReferences() {
 			found := false
-			for _, newO := range obj.GetOwnerReferences() {
+			for _, newO := range newObj.GetOwnerReferences() {
 				if oldO == newO {
 					found = true
 					break
 				}
 			}
 			if !found {
-				oldRef, _ := newOwnReferenceFromOwnerReference(obj.GetNamespace(), oldO)
+				oldRef, _ := newOwnReferenceFromOwnerReference(newObj.GetNamespace(), oldO)
 				if _, ok := tracker.ownedObjects[*oldRef]; !ok {
 					continue
 				}
@@ -217,10 +218,10 @@ func updateTrackerOwnerReferences(tracker *resourceGroupTracker, trackedObj clie
 			}
 		}
 	}
-	for _, newO := range obj.GetOwnerReferences() {
+	for _, newO := range newObj.GetOwnerReferences() {
 		found := false
-		if trackedObj != nil {
-			for _, oldO := range trackedObj.GetOwnerReferences() {
+		if oldObj != nil {
+			for _, oldO := range oldObj.GetOwnerReferences() {
 				if newO == oldO {
 					found = true
 					break
@@ -228,7 +229,7 @@ func updateTrackerOwnerReferences(tracker *resourceGroupTracker, trackedObj clie
 			}
 		}
 		if !found {
-			newRef, _ := newOwnReferenceFromOwnerReference(obj.GetNamespace(), newO)
+			newRef, _ := newOwnReferenceFromOwnerReference(newObj.GetNamespace(), newO)
 			if _, ok := tracker.ownedObjects[*newRef]; !ok {
 				tracker.ownedObjects[*newRef] = map[ownReference]struct{}{}
 			}
