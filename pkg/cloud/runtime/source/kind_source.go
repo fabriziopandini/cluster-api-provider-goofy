@@ -11,6 +11,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+// Kind is used to provide a source of events originating inside the resourceGroup from Watches (e.g. Resource Create).
 type Kind struct {
 	Type     client.Object
 	Informer ccache.Informer
@@ -18,6 +19,7 @@ type Kind struct {
 
 var _ Source = &Kind{}
 
+// Start implement Source.
 func (ks *Kind) Start(ctx context.Context, handler chandler.EventHandler, queue workqueue.RateLimitingInterface, prct ...cpredicate.Predicate) error {
 	if ks.Type == nil {
 		return fmt.Errorf("must specify Kind.Type")
@@ -39,12 +41,14 @@ func (ks *Kind) String() string {
 
 var _ ccache.InformEventHandler = informerEventHandler{}
 
+// informerEventHandler handle events originated by a source.
 type informerEventHandler struct {
 	EventHandler chandler.EventHandler
 	Queue        workqueue.RateLimitingInterface
 	Predicates   []cpredicate.Predicate
 }
 
+// OnCreate creates CreateEvent and calls Create on EventHandler.
 func (e informerEventHandler) OnCreate(resourceGroup string, obj client.Object) {
 	c := cevent.CreateEvent{
 		ResourceGroup: resourceGroup,
@@ -58,6 +62,7 @@ func (e informerEventHandler) OnCreate(resourceGroup string, obj client.Object) 
 	e.EventHandler.Create(c, e.Queue)
 }
 
+// OnUpdate creates UpdateEvent and calls Update on EventHandler.
 func (e informerEventHandler) OnUpdate(resourceGroup string, oldObj, newObj client.Object) {
 	u := cevent.UpdateEvent{
 		ResourceGroup: resourceGroup,
@@ -72,6 +77,7 @@ func (e informerEventHandler) OnUpdate(resourceGroup string, oldObj, newObj clie
 	e.EventHandler.Update(u, e.Queue)
 }
 
+// OnDelete creates DeleteEvent and calls Delete on EventHandler.
 func (e informerEventHandler) OnDelete(resourceGroup string, obj client.Object) {
 	d := cevent.DeleteEvent{
 		ResourceGroup: resourceGroup,
@@ -85,6 +91,7 @@ func (e informerEventHandler) OnDelete(resourceGroup string, obj client.Object) 
 	e.EventHandler.Delete(d, e.Queue)
 }
 
+// OnGeneric creates GenericEvent and calls Generic on EventHandler.
 func (e informerEventHandler) OnGeneric(resourceGroup string, obj client.Object) {
 	d := cevent.GenericEvent{
 		ResourceGroup: resourceGroup,

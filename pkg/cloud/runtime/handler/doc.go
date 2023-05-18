@@ -1,6 +1,9 @@
 /*
-Package handler defines resource group aware EventHandler.
+Package handler defines EventHandlers that enqueue reconcile.Requests in response to Create, Update, Deletion Events
+observed from Watching Kubernetes APIs.
 
-It also defines EnqueueRequestForObject event handler to queue request for event's objects.
+The implementation is derived from sigs.k8s.io/controller-runtime/pkg/handler and the main difference are:
+- event handlers are resourceGroup aware.
+- the package provide only one event handler implementation, EnqueueRequestForObject.
 */
 package handler
