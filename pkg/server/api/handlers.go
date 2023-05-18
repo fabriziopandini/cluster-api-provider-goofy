@@ -5,7 +5,8 @@ import (
 	"fmt"
 	"github.com/emicklei/go-restful/v3"
 	jsonpatch "github.com/evanphx/json-patch/v5"
-	gportforward "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/server/portforward"
+	cmanager "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/manager"
+	gportforward "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/server/api/portforward"
 	"io"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -18,35 +19,42 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"strings"
 	"time"
 )
 
-func NewAPIServerHandler(scheme *runtime.Scheme) http.Handler {
+// ResourceGroupResolver defines a func that can identify which workloadCluster/resourceGroup a
+// request targets to.
+type ResourceGroupResolver func(host string) (string, error)
+
+// NewAPIServerHandler returns an http.Handler for fake API server.
+func NewAPIServerHandler(manager cmanager.Manager, resolver ResourceGroupResolver) http.Handler {
 	apiServer := &apiServerHandler{
-		container: restful.NewContainer(),
-		scheme:    scheme,
+		container:             restful.NewContainer(),
+		manager:               manager,
+		resourceGroupResolver: resolver,
 	}
 
 	apiServer.container.Filter(apiServer.globalLogging)
 
 	ws := new(restful.WebService)
-	ws.Path("/apiserver")
 	ws.Consumes(runtime.ContentTypeJSON)
 	ws.Produces(runtime.ContentTypeJSON)
 
-	ws.Route(ws.GET("/{cluster}/api").To(apiServer.apiDiscovery))
-	ws.Route(ws.GET("/{cluster}/apis").To(apiServer.discoveryApis))
-	ws.Route(ws.GET("/{cluster}/api/v1").To(apiServer.apiV1Discovery))
+	// Discovery endpoints
+	ws.Route(ws.GET("/api").To(apiServer.apiDiscovery))
+	ws.Route(ws.GET("/apis").To(apiServer.discoveryApis))
+	ws.Route(ws.GET("/api/v1").To(apiServer.apiV1Discovery))
 
-	ws.Route(ws.GET("/{cluster}/api/v1/{resource}").To(apiServer.apiV1List))
+	// CRUD endpoints
 	// TODO: create
-	ws.Route(ws.GET("/{cluster}/api/v1/{resource}/{name}").To(apiServer.apiV1Get))
-	ws.Route(ws.PATCH("/{cluster}/api/v1/{resource}/{name}").Consumes(string(types.MergePatchType), string(types.StrategicMergePatchType)).To(apiServer.apiV1Patch))
-	ws.Route(ws.DELETE("/{cluster}/api/v1/{resource}/{name}").Consumes(runtime.ContentTypeProtobuf).To(apiServer.apiV1Delete))
+	ws.Route(ws.GET("/api/v1/{resource}").To(apiServer.apiV1List))
+	ws.Route(ws.GET("/api/v1/{resource}/{name}").To(apiServer.apiV1Get))
+	ws.Route(ws.PATCH("/api/v1/{resource}/{name}").Consumes(string(types.MergePatchType), string(types.StrategicMergePatchType)).To(apiServer.apiV1Patch))
+	ws.Route(ws.DELETE("/api/v1/{resource}/{name}").Consumes(runtime.ContentTypeProtobuf).To(apiServer.apiV1Delete))
 
-	ws.Route(ws.GET("/{cluster}/api/v1/namespaces/{namespace}/pods/{name}/portforward").To(apiServer.apiV1PortForward))
-	ws.Route(ws.POST("/{cluster}/api/v1/namespaces/{namespace}/pods/{name}/portforward").Consumes("*/*").To(apiServer.apiV1PortForward))
+	// Port forward endpoints
+	ws.Route(ws.GET("/api/v1/namespaces/{namespace}/pods/{name}/portforward").To(apiServer.apiV1PortForward))
+	ws.Route(ws.POST("/api/v1/namespaces/{namespace}/pods/{name}/portforward").Consumes("*/*").To(apiServer.apiV1PortForward))
 
 	apiServer.container.Add(ws)
 
@@ -54,8 +62,9 @@ func NewAPIServerHandler(scheme *runtime.Scheme) http.Handler {
 }
 
 type apiServerHandler struct {
-	scheme    *runtime.Scheme
-	container *restful.Container
+	manager               cmanager.Manager
+	container             *restful.Container
+	resourceGroupResolver ResourceGroupResolver
 }
 
 func (h *apiServerHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -63,12 +72,12 @@ func (h *apiServerHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *apiServerHandler) globalLogging(req *restful.Request, resp *restful.Response, chain *restful.FilterChain) {
-	log.Printf("[global-filter (logger)] %s,%s %s\n", req.Request.Method, req.Request.URL, req.HeaderParameter("Content-Type"))
+	log.Printf("%s,%s %s\n", req.Request.Method, req.Request.URL, req.HeaderParameter("Content-Type"))
 	chain.ProcessFilter(req, resp)
 }
 
 func (h *apiServerHandler) routeLogging(req *restful.Request, resp *restful.Response, chain *restful.FilterChain) {
-	log.Printf("[route-filter (logger)] %s,%s\n", req.Request.Method, req.Request.URL)
+	log.Printf("[route-debug] %s,%s\n", req.Request.Method, req.Request.URL)
 	chain.ProcessFilter(req, resp)
 }
 
@@ -117,6 +126,12 @@ func (h *apiServerHandler) apiV1Discovery(req *restful.Request, resp *restful.Re
 }
 
 func (h *apiServerHandler) apiV1List(req *restful.Request, resp *restful.Response) {
+	resourceGroup, err := h.resourceGroupResolver(req.Request.Host)
+	if err != nil {
+
+	}
+	fmt.Print(resourceGroup)
+
 	// TODO: make this dynamic reading objects from the cache.
 	nodeList := &corev1.NodeList{
 		Items: []corev1.Node{
@@ -267,7 +282,7 @@ func (h *apiServerHandler) apiV1Patch(req *restful.Request, resp *restful.Respon
 		panic("not supported")
 	}
 
-	codecFactory := serializer.NewCodecFactory(h.scheme)
+	codecFactory := serializer.NewCodecFactory(h.manager.GetScheme())
 	err = runtime.DecodeInto(codecFactory.UniversalDecoder(), changedJS, obj)
 	if err != nil {
 
@@ -280,7 +295,7 @@ func (h *apiServerHandler) apiV1Patch(req *restful.Request, resp *restful.Respon
 }
 
 func (h *apiServerHandler) getEncoder(obj runtime.Object, gv runtime.GroupVersioner) (runtime.Encoder, error) {
-	codecs := serializer.NewCodecFactory(h.scheme)
+	codecs := serializer.NewCodecFactory(h.manager.GetScheme())
 
 	info, ok := runtime.SerializerInfoForMediaType(codecs.SupportedMediaTypes(), runtime.ContentTypeJSON)
 	if !ok {
@@ -316,13 +331,16 @@ func (h *apiServerHandler) apiV1PortForward(req *restful.Request, resp *restful.
 	// - Opening a connection to the target endpoint, the endpoint to port forward to, and setting up
 	//   a bi-directional copy of data because the server acts as a man in the middle.
 
+	podName := req.PathParameter("name")
+	podNamespace := req.PathParameter("namespace")
+
 	// Perform a sub protocol negotiation, ensuring tha client and the server agree on how
 	// to handle communications over the port forwarded connection.
 	request := req.Request
 	respWriter := resp.ResponseWriter
 	_, err := httpstream.Handshake(request, respWriter, []string{portforward.PortForwardProtocolV1Name})
 	if err != nil {
-		panic("error handling not implemented")
+
 	}
 
 	// Create a channel where to handle http streams that will be generated for each subsequent
@@ -334,54 +352,39 @@ func (h *apiServerHandler) apiV1PortForward(req *restful.Request, resp *restful.
 	upgrader := spdy.NewResponseUpgrader()
 	conn := upgrader.UpgradeResponse(respWriter, request, gportforward.HttpStreamReceived(streamChan))
 	if conn == nil {
-		panic("error handling not implemented")
+
 	}
 	defer func() {
 		_ = conn.Close()
 	}()
 	conn.SetIdleTimeout(10 * time.Minute)
 
-	// Given that in the goofy provider there is no real infrastructure, we are forwarding the connection back to the
-	// same server that is implementing the fake API server for all the clusters (the goofy controller pod).
+	// Given that in the goofy provider there is no real infrastructure, and thus no real workload cluster,
+	// we are going to forward all the connection back to the same server (the goofy controller pod).
 	_, serverPort, err := net.SplitHostPort(req.Request.Host)
 	if err != nil {
-		panic("error handling not implemented")
+
 	}
 
 	// Start the process handling streams that are published in the stream channel, please note that:
-	// - TODO: describe when port forwarder is called
+	// - The connection with the target will be established only when the first operation will be executed
+	// - Following operations will re-use the same connection.
 	streamHandler := gportforward.NewHttpStreamHandler(
 		conn,
 		streamChan,
-		req.PathParameter("name"), // name of the Pod to forward to
-		req.PathParameter("namespace"),
-		portForwarderWithPortOverride(serverPort),
+		podName,
+		podNamespace,
+		func(ctx context.Context, podName, podNamespace, _ string, stream io.ReadWriteCloser) error {
+			return doPortForward(ctx, podName, podNamespace, serverPort, stream)
+		},
 	)
 	streamHandler.Run(context.Background())
 }
 
-func portForwarderWithPortOverride(serverPort string) func(ctx context.Context, podName, podNamespace, port string, stream io.ReadWriteCloser) error {
-	return func(ctx context.Context, podName, podNamespace, port string, stream io.ReadWriteCloser) error {
-		if strings.HasPrefix(podName, "kube-apiserver-") {
-			return portForwarder(ctx, podName, podNamespace, serverPort, stream)
-		}
-		if strings.HasPrefix(podName, "kubernetes") {
-			return portForwarder(ctx, podName, podNamespace, port, stream)
-		}
-		panic("not a supported podName")
-	}
-}
-
-// portForwarder handle a single port
-func portForwarder(ctx context.Context, podName, podNamespace, port string, stream io.ReadWriteCloser) error {
-	// Given that in the goofy provider there is no real infrastructure, there isn't also
-	// a real workload cluster, nor real pods to forward to.
-	// Se, for faking a real workload cluster behaviour we are forwarding the connection back to the
-	// same server that is implementing the fake API server for all the clusters (the goofy controller pod).
-	//
-	// This works without additional efforts for the port forward that kcp is doing th check
-	// certificate expiration for the apiServer; TBD for etcd.
-
+// doPortForward establish a connection to the target of the port forward operation,  and sets up
+// a bi-directional copy of data.
+// In the case of this provider, the target endpoint is always on the same server (the goofy controller pod).
+func doPortForward(ctx context.Context, _, _, port string, stream io.ReadWriteCloser) error {
 	// Get a connection to the target of the port forward operation.
 	dial, err := net.Dial("tcp", fmt.Sprintf(":%s", port))
 	if err != nil {
