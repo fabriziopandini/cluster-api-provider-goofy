@@ -7,7 +7,7 @@ import (
 	"github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/handler"
 	cmanager "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/manager"
 	cpredicate "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/predicate"
-	creconciler "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/reconciler"
+	creconciler "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/reconcile"
 	csource "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/source"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"

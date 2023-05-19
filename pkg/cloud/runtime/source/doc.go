@@ -1,6 +1,9 @@
 /*
-Package source defines a Source.
+Package source provides event streams to hook up to Controllers with Controller.Watch.  Events are
+used with handler.EventHandlers to enqueue reconcile.Requests and trigger Reconciles for resources.
 
-It also implement a Kind source to be used to watch events for a specific kind.
+The implementation is derived from sigs.k8s.io/controller-runtime/pkg/source  and the main difference are:
+- sources are resourceGroup aware.
+- the package provide only one sources implementation, Kind.
 */
 package source

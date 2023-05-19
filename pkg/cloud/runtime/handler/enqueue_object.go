@@ -2,7 +2,7 @@ package handler
 
 import (
 	cevent "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/event"
-	creconciler "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/reconciler"
+	creconciler "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/reconcile"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/workqueue"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -10,8 +10,11 @@ import (
 
 var _ EventHandler = &EnqueueRequestForObject{}
 
+// EnqueueRequestForObject enqueues a Request containing the ResourceGroup, Name and Namespace of the object that is the source of the Event.
+// handler.EnqueueRequestForObject is used by almost all Controllers that have associated Resources to reconcile.
 type EnqueueRequestForObject struct{}
 
+// Create implements EventHandler.
 func (e *EnqueueRequestForObject) Create(evt cevent.CreateEvent, q workqueue.RateLimitingInterface) {
 	if evt.Object == nil {
 		return
@@ -25,6 +28,7 @@ func (e *EnqueueRequestForObject) Create(evt cevent.CreateEvent, q workqueue.Rat
 	})
 }
 
+// Update implements EventHandler.
 func (e *EnqueueRequestForObject) Update(evt cevent.UpdateEvent, q workqueue.RateLimitingInterface) {
 	switch {
 	case evt.ObjectNew != nil:
@@ -49,6 +53,7 @@ func (e *EnqueueRequestForObject) Update(evt cevent.UpdateEvent, q workqueue.Rat
 	}
 }
 
+// Delete implements EventHandler.
 func (e *EnqueueRequestForObject) Delete(evt cevent.DeleteEvent, q workqueue.RateLimitingInterface) {
 	if evt.Object == nil {
 		return
@@ -62,6 +67,7 @@ func (e *EnqueueRequestForObject) Delete(evt cevent.DeleteEvent, q workqueue.Rat
 	})
 }
 
+// Generic implements EventHandler.
 func (e *EnqueueRequestForObject) Generic(evt cevent.GenericEvent, q workqueue.RateLimitingInterface) {
 	if evt.Object == nil {
 		return
