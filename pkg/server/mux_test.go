@@ -1,0 +1,279 @@
+package server
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	cmanager "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/manager"
+	"github.com/fabriziopandini/cluster-api-provider-goofy/pkg/server/proxy"
+	"github.com/pkg/errors"
+	"github.com/stretchr/testify/require"
+	clientv3 "go.etcd.io/etcd/client/v3"
+	"google.golang.org/grpc"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"math/big"
+	"sigs.k8s.io/cluster-api/util/certs"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"testing"
+	"time"
+)
+
+var scheme = runtime.NewScheme()
+
+func init() {
+	_ = metav1.AddMetaToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+}
+
+func TestAPI_CRUD(t *testing.T) {
+	manager := cmanager.New(scheme)
+
+	host := "127.0.0.1"
+	wcmux := NewWorkloadClustersMux(manager, host)
+
+	// InfraCluster controller >> when "creating the load balancer"
+	wcl1 := "workload-cluster1"
+	listener, err := wcmux.InitWorkloadClusterListener(wcl1)
+	require.NoError(t, err)
+	require.Equal(t, listener.Host(), host)
+	require.NotEmpty(t, listener.Port())
+
+	caCert, caKey, err := newCertificateAuthority()
+	require.NoError(t, err)
+
+	// InfraMachine controller >> when "creating the API Server pod"
+	apiServerPod1 := "kube-apiserver-1"
+	err = wcmux.AddAPIServer(wcl1, apiServerPod1, caCert, caKey)
+	require.NoError(t, err)
+
+	etcdCert, etcdKey, err := newCertificateAuthority()
+	require.NoError(t, err)
+
+	// InfraMachine controller >> when "creating the Etcd member pod"
+	etcdPodMember1 := "etcd-1"
+	err = wcmux.AddEtcdMember(wcl1, etcdPodMember1, etcdCert, etcdKey)
+	require.NoError(t, err)
+
+	// Test API
+
+	c, err := listener.GetClient()
+	require.NoError(t, err)
+
+	// list
+
+	nl := &corev1.NodeList{}
+	err = c.List(context.TODO(), nl)
+	require.NoError(t, err)
+
+	// get
+
+	n := &corev1.Node{}
+	err = c.Get(context.TODO(), client.ObjectKey{Name: "foo"}, n)
+	require.NoError(t, err)
+
+	// create
+
+	// TODO: create
+
+	// patch
+	// note: strategjc merge patch will behave like traditional patch (ok for the use cases saw so far)
+	//       ssa patch will behave like traditional patch or something similar.
+
+	n2 := n.DeepCopy()
+	n2.Annotations = map[string]string{"foo": "bar"}
+	err = c.Patch(context.TODO(), n2, client.MergeFrom(n))
+	require.NoError(t, err)
+
+	n3 := n2.DeepCopy()
+	taints := []corev1.Taint{}
+	for _, taint := range n.Spec.Taints {
+		if taint.Key == "foo" {
+			continue
+		}
+		taints = append(taints, taint)
+	}
+	n3.Spec.Taints = taints
+	err = c.Patch(context.TODO(), n3, client.StrategicMergeFrom(n2))
+	require.NoError(t, err)
+
+	/*
+		n4 := n.DeepCopy()
+		patchOptions := []client.PatchOption{
+			client.ForceOwnership,
+			client.FieldOwner("obj-manager"),
+			client.DryRunAll,
+		}
+		err = c.Patch(ctx, n4, client.Apply, patchOptions...)
+		require.NoError(t, err)
+
+		patchOptions = []client.PatchOption{
+			client.ForceOwnership,
+			client.FieldOwner("obj-manager"),
+		}
+		err = c.Patch(ctx, n4, client.Apply, patchOptions...)
+		require.NoError(t, err)
+	*/
+
+	// delete
+
+	err = c.Delete(context.TODO(), n)
+	require.NoError(t, err)
+}
+
+func TestAPI_PortForward(t *testing.T) {
+	manager := cmanager.New(scheme)
+
+	host := "127.0.0.1"
+	wcmux := NewWorkloadClustersMux(manager, host)
+
+	// InfraCluster controller >> when "creating the load balancer"
+	wcl1 := "workload-cluster1"
+	listener, err := wcmux.InitWorkloadClusterListener(wcl1)
+	require.NoError(t, err)
+	require.Equal(t, listener.Host(), host)
+	require.NotEmpty(t, listener.Port())
+
+	caCert, caKey, err := newCertificateAuthority()
+	require.NoError(t, err)
+
+	// InfraMachine controller >> when "creating the API Server pod"
+	apiServerPod1 := "kube-apiserver-1"
+	err = wcmux.AddAPIServer(wcl1, apiServerPod1, caCert, caKey)
+	require.NoError(t, err)
+
+	etcdCert, etcdKey, err := newCertificateAuthority()
+	require.NoError(t, err)
+
+	// InfraMachine controller >> when "creating the Etcd member pod"
+	etcdPodMember1 := "etcd-1"
+	err = wcmux.AddEtcdMember(wcl1, etcdPodMember1, etcdCert, etcdKey)
+	require.NoError(t, err)
+
+	// Test API server TLS handshake via port forward.
+
+	restConfig, err := listener.RESTConfig()
+	require.NoError(t, err)
+
+	p1 := proxy.Proxy{
+		Kind:       "pods",
+		Namespace:  metav1.NamespaceSystem,
+		KubeConfig: restConfig,
+		Port:       1234,
+	}
+
+	dialer1, err := proxy.NewDialer(p1)
+	require.NoError(t, err)
+
+	rawConn, err := dialer1.DialContextWithAddr(context.Background(), "kube-apiserver-foo")
+	require.NoError(t, err)
+	defer rawConn.Close()
+
+	conn := tls.Client(rawConn, &tls.Config{InsecureSkipVerify: true}) //nolint:gosec // Intentionally not verifying the server cert here.
+	err = conn.HandshakeContext(context.Background())
+	require.NoError(t, err)
+	defer conn.Close()
+
+	// Test Etcd via port forward
+
+	caPool := x509.NewCertPool()
+	caPool.AddCert(etcdCert)
+
+	config := apiServerEtcdClientCertificateConfig()
+	cert, key, err := newCertAndKey(etcdCert, etcdKey, config)
+	require.NoError(t, err)
+
+	clientCert, err := tls.X509KeyPair(certs.EncodeCertPEM(cert), certs.EncodePrivateKeyPEM(key))
+	require.NoError(t, err)
+
+	p2 := proxy.Proxy{
+		Kind:       "pods",
+		Namespace:  metav1.NamespaceSystem,
+		KubeConfig: restConfig,
+		Port:       2379,
+	}
+
+	dialer2, err := proxy.NewDialer(p2)
+	require.NoError(t, err)
+
+	etcdClient1, err := clientv3.New(clientv3.Config{
+		Endpoints:   []string{etcdPodMember1},
+		DialTimeout: 2 * time.Second,
+
+		DialOptions: []grpc.DialOption{
+			grpc.WithBlock(), // block until the underlying connection is up
+			grpc.WithContextDialer(dialer2.DialContextWithAddr),
+		},
+		TLS: &tls.Config{
+			RootCAs:      caPool,
+			Certificates: []tls.Certificate{clientCert},
+			MinVersion:   tls.VersionTLS12,
+		},
+	})
+	require.NoError(t, err)
+
+	_, err = etcdClient1.MemberList(context.Background())
+	require.NoError(t, err)
+
+	err = etcdClient1.Close()
+	require.NoError(t, err)
+}
+
+// newCertificateAuthority creates new certificate and private key for the certificate authority.
+func newCertificateAuthority() (*x509.Certificate, *rsa.PrivateKey, error) {
+	key, err := certs.NewPrivateKey()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	c, err := newSelfSignedCACert(key)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return c, key, nil
+}
+
+// newSelfSignedCACert creates a CA certificate.
+func newSelfSignedCACert(key *rsa.PrivateKey) (*x509.Certificate, error) {
+	cfg := certs.Config{
+		CommonName: "kubernetes",
+	}
+
+	now := time.Now().UTC()
+
+	tmpl := x509.Certificate{
+		SerialNumber: new(big.Int).SetInt64(0),
+		Subject: pkix.Name{
+			CommonName:   cfg.CommonName,
+			Organization: cfg.Organization,
+		},
+		NotBefore:             now.Add(time.Minute * -5),
+		NotAfter:              now.Add(time.Hour * 24 * 365 * 10), // 10 years
+		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		MaxPathLenZero:        true,
+		BasicConstraintsValid: true,
+		MaxPathLen:            0,
+		IsCA:                  true,
+	}
+
+	b, err := x509.CreateCertificate(rand.Reader, &tmpl, &tmpl, key.Public(), key)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to create self signed CA certificate: %+v", tmpl)
+	}
+
+	c, err := x509.ParseCertificate(b)
+	return c, errors.WithStack(err)
+}
+
+func apiServerEtcdClientCertificateConfig() *certs.Config {
+	return &certs.Config{
+		CommonName:   "apiserver-etcd-client",
+		Organization: []string{"system:masters"}, // TODO: check if we can drop
+		Usages:       []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+}
