@@ -30,6 +30,7 @@ type Cache interface {
 	Create(resourceGroup string, obj client.Object) error
 	Delete(resourceGroup string, obj client.Object) error
 	Update(resourceGroup string, obj client.Object) error
+	Patch(resourceGroup string, obj client.Object, patch client.Patch) error
 
 	GetInformer(ctx context.Context, obj client.Object) (Informer, error)
 	GetInformerForKind(ctx context.Context, gvk schema.GroupVersionKind) (Informer, error)

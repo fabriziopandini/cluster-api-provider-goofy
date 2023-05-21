@@ -2,9 +2,13 @@ package cache
 
 import (
 	"fmt"
+	jsonpatch "github.com/evanphx/json-patch/v5"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"time"
 
-	"k8s.io/apimachinery/pkg/api/errors"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -16,15 +20,15 @@ import (
 
 func (c *cache) Get(resourceGroup string, key client.ObjectKey, obj client.Object) error {
 	if resourceGroup == "" {
-		return errors.NewBadRequest("resourceGroup must not be empty")
+		return apierrors.NewBadRequest("resourceGroup must not be empty")
 	}
 
 	if key.Name == "" {
-		return errors.NewBadRequest("key.Name must not be empty")
+		return apierrors.NewBadRequest("key.Name must not be empty")
 	}
 
 	if obj == nil {
-		return errors.NewBadRequest("object must not be nil")
+		return apierrors.NewBadRequest("object must not be nil")
 	}
 
 	gvk, err := c.gvkGetAndSet(obj)
@@ -34,7 +38,7 @@ func (c *cache) Get(resourceGroup string, key client.ObjectKey, obj client.Objec
 
 	tracker := c.resourceGroupTracker(resourceGroup)
 	if tracker == nil {
-		return errors.NewBadRequest(fmt.Sprintf("resourceGroup %s does not exist", resourceGroup))
+		return apierrors.NewBadRequest(fmt.Sprintf("resourceGroup %s does not exist", resourceGroup))
 	}
 
 	tracker.lock.RLock()
@@ -42,16 +46,16 @@ func (c *cache) Get(resourceGroup string, key client.ObjectKey, obj client.Objec
 
 	objects, ok := tracker.objects[gvk]
 	if !ok {
-		return errors.NewNotFound(unsafeGuessGroupVersionResource(gvk).GroupResource(), key.String())
+		return apierrors.NewNotFound(unsafeGuessGroupVersionResource(gvk).GroupResource(), key.String())
 	}
 
 	trackedObj, ok := objects[key]
 	if !ok {
-		return errors.NewNotFound(unsafeGuessGroupVersionResource(gvk).GroupResource(), key.String())
+		return apierrors.NewNotFound(unsafeGuessGroupVersionResource(gvk).GroupResource(), key.String())
 	}
 
 	if err := c.scheme.Convert(trackedObj, obj, nil); err != nil {
-		return errors.NewInternalError(err)
+		return apierrors.NewInternalError(err)
 	}
 	obj.GetObjectKind().SetGroupVersionKind(trackedObj.GetObjectKind().GroupVersionKind())
 
@@ -60,11 +64,11 @@ func (c *cache) Get(resourceGroup string, key client.ObjectKey, obj client.Objec
 
 func (c *cache) List(resourceGroup string, list client.ObjectList, opts ...client.ListOption) error {
 	if resourceGroup == "" {
-		return errors.NewBadRequest("resourceGroup must not be empty")
+		return apierrors.NewBadRequest("resourceGroup must not be empty")
 	}
 
 	if list == nil {
-		return errors.NewBadRequest("list must not be be nil")
+		return apierrors.NewBadRequest("list must not be be nil")
 	}
 
 	gvk, err := c.gvkGetAndSet(list)
@@ -74,7 +78,7 @@ func (c *cache) List(resourceGroup string, list client.ObjectList, opts ...clien
 
 	tracker := c.resourceGroupTracker(resourceGroup)
 	if tracker == nil {
-		return errors.NewBadRequest(fmt.Sprintf("resourceGroup %s does not exist", resourceGroup))
+		return apierrors.NewBadRequest(fmt.Sprintf("resourceGroup %s does not exist", resourceGroup))
 	}
 
 	tracker.lock.RLock()
@@ -90,7 +94,7 @@ func (c *cache) List(resourceGroup string, list client.ObjectList, opts ...clien
 			if listOpts.LabelSelector != nil && !listOpts.LabelSelector.Empty() {
 				objMeta, err := meta.Accessor(obj)
 				if err != nil {
-					return errors.NewInternalError(err)
+					return apierrors.NewInternalError(err)
 				}
 
 				metaLabels := labels.Set(objMeta.GetLabels())
@@ -100,12 +104,21 @@ func (c *cache) List(resourceGroup string, list client.ObjectList, opts ...clien
 			}
 
 			obj := obj.DeepCopyObject().(client.Object)
-			items = append(items, obj)
+			switch list.(type) {
+			case *unstructured.UnstructuredList:
+				unstructuredObj := &unstructured.Unstructured{}
+				if err := c.scheme.Convert(obj, unstructuredObj, nil); err != nil {
+					return apierrors.NewInternalError(err)
+				}
+				items = append(items, unstructuredObj)
+			default:
+				items = append(items, obj)
+			}
 		}
 	}
 
 	if err := meta.SetList(list, items); err != nil {
-		return errors.NewInternalError(err)
+		return apierrors.NewInternalError(err)
 	}
 	return nil
 }
@@ -120,11 +133,11 @@ func (c *cache) Update(resourceGroup string, obj client.Object) error {
 
 func (c *cache) store(resourceGroup string, obj client.Object, replaceExisting bool) error {
 	if resourceGroup == "" {
-		return errors.NewBadRequest("resourceGroup must not be empty")
+		return apierrors.NewBadRequest("resourceGroup must not be empty")
 	}
 
 	if obj == nil {
-		return errors.NewBadRequest("object must not be nil")
+		return apierrors.NewBadRequest("object must not be nil")
 	}
 
 	gvk, err := c.gvkGetAndSet(obj)
@@ -133,18 +146,17 @@ func (c *cache) store(resourceGroup string, obj client.Object, replaceExisting b
 	}
 
 	if replaceExisting && obj.GetName() == "" {
-		return errors.NewBadRequest("object name must not be empty")
+		return apierrors.NewBadRequest("object name must not be empty")
 	}
 
 	tracker := c.resourceGroupTracker(resourceGroup)
 	if tracker == nil {
-		return errors.NewBadRequest(fmt.Sprintf("resourceGroup %s does not exist", resourceGroup))
+		return apierrors.NewBadRequest(fmt.Sprintf("resourceGroup %s does not exist", resourceGroup))
 	}
 
 	tracker.lock.Lock()
 	defer tracker.lock.Unlock()
 
-	obj = obj.DeepCopyObject().(client.Object)
 	for _, o := range obj.GetOwnerReferences() {
 		oRef, err := newOwnReferenceFromOwnerReference(obj.GetNamespace(), o)
 		if err != nil {
@@ -152,10 +164,10 @@ func (c *cache) store(resourceGroup string, obj client.Object, replaceExisting b
 		}
 		objects, ok := tracker.objects[oRef.gvk]
 		if !ok {
-			return errors.NewBadRequest(fmt.Sprintf("ownerReference %s, Name=%s does not exist", oRef.gvk, oRef.key.Name))
+			return apierrors.NewBadRequest(fmt.Sprintf("ownerReference %s, Name=%s does not exist", oRef.gvk, oRef.key.Name))
 		}
 		if _, ok := objects[oRef.key]; !ok {
-			return errors.NewBadRequest(fmt.Sprintf("ownerReference %s, Name=%s does not exist", oRef.gvk, oRef.key.Name))
+			return apierrors.NewBadRequest(fmt.Sprintf("ownerReference %s, Name=%s does not exist", oRef.gvk, oRef.key.Name))
 		}
 	}
 
@@ -169,28 +181,28 @@ func (c *cache) store(resourceGroup string, obj client.Object, replaceExisting b
 	if trackedObj, ok := tracker.objects[gvk][key]; ok {
 		if replaceExisting {
 			if trackedObj.GetResourceVersion() != obj.GetResourceVersion() {
-				return errors.NewConflict(unsafeGuessGroupVersionResource(gvk).GroupResource(), key.String(), fmt.Errorf("object has been modified"))
+				return apierrors.NewConflict(unsafeGuessGroupVersionResource(gvk).GroupResource(), key.String(), fmt.Errorf("object has been modified"))
 			}
 
 			if err := c.beforeUpdate(resourceGroup, trackedObj, obj); err != nil {
 				return err
 			}
-			tracker.objects[gvk][key] = obj
+			tracker.objects[gvk][key] = obj.DeepCopyObject().(client.Object)
 			updateTrackerOwnerReferences(tracker, trackedObj, obj, objRef)
 			c.afterUpdate(resourceGroup, trackedObj, obj)
 			return nil
 		}
-		return errors.NewAlreadyExists(unsafeGuessGroupVersionResource(gvk).GroupResource(), key.String())
+		return apierrors.NewAlreadyExists(unsafeGuessGroupVersionResource(gvk).GroupResource(), key.String())
 	}
 
 	if replaceExisting {
-		return errors.NewNotFound(unsafeGuessGroupVersionResource(gvk).GroupResource(), key.String())
+		return apierrors.NewNotFound(unsafeGuessGroupVersionResource(gvk).GroupResource(), key.String())
 	}
 
 	if err := c.beforeCreate(resourceGroup, obj); err != nil {
 		return err
 	}
-	tracker.objects[gvk][key] = obj
+	tracker.objects[gvk][key] = obj.DeepCopyObject().(client.Object)
 	updateTrackerOwnerReferences(tracker, nil, obj, objRef)
 	c.afterCreate(resourceGroup, obj)
 	return nil
@@ -238,17 +250,73 @@ func updateTrackerOwnerReferences(tracker *resourceGroupTracker, oldObj client.O
 	}
 }
 
+func (c *cache) Patch(resourceGroup string, obj client.Object, patch client.Patch) error {
+	obj = obj.DeepCopyObject().(client.Object)
+	if err := c.Get(resourceGroup, client.ObjectKeyFromObject(obj), obj); err != nil {
+		return err
+	}
+
+	patchData, err := patch.Data(obj)
+
+	encoder, err := c.getEncoder(obj, corev1.SchemeGroupVersion)
+	if err != nil {
+		return apierrors.NewInternalError(err)
+	}
+
+	originalObjJS, err := runtime.Encode(encoder, obj)
+	if err != nil {
+		return apierrors.NewInternalError(err)
+	}
+
+	var changedJS []byte
+	switch patch.Type() {
+	case types.MergePatchType:
+		changedJS, err = jsonpatch.MergePatch(originalObjJS, patchData)
+		if err != nil {
+			return apierrors.NewInternalError(err)
+		}
+	case types.StrategicMergePatchType:
+		// NOTE: we are treating StrategicMergePatch as MergePatch; it is an acceptable proxy for this use case.
+		changedJS, err = jsonpatch.MergePatch(originalObjJS, patchData)
+		if err != nil {
+			return apierrors.NewInternalError(err)
+		}
+	default:
+		return apierrors.NewBadRequest(fmt.Sprintf("path of type %s are not supported", patch.Type()))
+	}
+
+	codecFactory := serializer.NewCodecFactory(c.scheme)
+	err = runtime.DecodeInto(codecFactory.UniversalDecoder(), changedJS, obj)
+	if err != nil {
+		return apierrors.NewInternalError(err)
+	}
+
+	return c.store(resourceGroup, obj, true)
+}
+
+func (h *cache) getEncoder(obj runtime.Object, gv runtime.GroupVersioner) (runtime.Encoder, error) {
+	codecs := serializer.NewCodecFactory(h.scheme)
+
+	info, ok := runtime.SerializerInfoForMediaType(codecs.SupportedMediaTypes(), runtime.ContentTypeJSON)
+	if !ok {
+		return nil, fmt.Errorf("failed to create serializer for %T", obj)
+	}
+
+	encoder := codecs.EncoderForVersion(info.Serializer, gv)
+	return encoder, nil
+}
+
 func (c *cache) Delete(resourceGroup string, obj client.Object) error {
 	if resourceGroup == "" {
-		return errors.NewBadRequest("resourceGroup must not be empty")
+		return apierrors.NewBadRequest("resourceGroup must not be empty")
 	}
 
 	if obj == nil {
-		return errors.NewBadRequest("object must not be nil")
+		return apierrors.NewBadRequest("object must not be nil")
 	}
 
 	if obj.GetName() == "" {
-		return errors.NewBadRequest("object name must not be empty")
+		return apierrors.NewBadRequest("object name must not be empty")
 	}
 
 	gvk, err := c.gvkGetAndSet(obj)
@@ -276,7 +344,7 @@ func (c *cache) Delete(resourceGroup string, obj client.Object) error {
 func (c *cache) tryDelete(resourceGroup string, gvk schema.GroupVersionKind, key types.NamespacedName) (bool, error) {
 	tracker := c.resourceGroupTracker(resourceGroup)
 	if tracker == nil {
-		return true, errors.NewBadRequest(fmt.Sprintf("resourceGroup %s does not exist", resourceGroup))
+		return true, apierrors.NewBadRequest(fmt.Sprintf("resourceGroup %s does not exist", resourceGroup))
 	}
 
 	tracker.lock.Lock()
@@ -288,12 +356,12 @@ func (c *cache) tryDelete(resourceGroup string, gvk schema.GroupVersionKind, key
 func (c *cache) doTryDelete(resourceGroup string, tracker *resourceGroupTracker, gvk schema.GroupVersionKind, key types.NamespacedName) (bool, error) {
 	objects, ok := tracker.objects[gvk]
 	if !ok {
-		return true, errors.NewNotFound(unsafeGuessGroupVersionResource(gvk).GroupResource(), key.String())
+		return true, apierrors.NewNotFound(unsafeGuessGroupVersionResource(gvk).GroupResource(), key.String())
 	}
 
 	obj, ok := tracker.objects[gvk][key]
 	if !ok {
-		return true, errors.NewNotFound(unsafeGuessGroupVersionResource(gvk).GroupResource(), key.String())
+		return true, apierrors.NewNotFound(unsafeGuessGroupVersionResource(gvk).GroupResource(), key.String())
 	}
 
 	if ownedReferences, ok := tracker.ownedObjects[ownReference{gvk: gvk, key: key}]; ok {
@@ -318,14 +386,14 @@ func (c *cache) doTryDelete(resourceGroup string, tracker *resourceGroupTracker,
 			return false, nil
 		}
 		if err := c.beforeDelete(resourceGroup, obj); err != nil {
-			return false, errors.NewBadRequest(err.Error())
+			return false, apierrors.NewBadRequest(err.Error())
 		}
 
 		oldObj := obj.DeepCopyObject().(client.Object)
 		now := metav1.Time{Time: time.Now().UTC()}
 		obj.SetDeletionTimestamp(&now)
 		if err := c.beforeUpdate(resourceGroup, oldObj, obj); err != nil {
-			return false, errors.NewBadRequest(err.Error())
+			return false, apierrors.NewBadRequest(err.Error())
 		}
 		// Required to override default beforeUpdate behaviour
 		// that prevent changes to automatically managed fields.

@@ -24,6 +24,7 @@ type Writer interface {
 
 	// Update updates a resource in a resource group.
 	Update(ctx context.Context, obj client.Object) error
+	Patch(ctx context.Context, obj client.Object, patch client.Patch) error
 }
 
 // Client knows how to perform CRUD operations on resources in a resource group.

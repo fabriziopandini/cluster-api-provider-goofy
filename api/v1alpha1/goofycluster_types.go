@@ -22,6 +22,15 @@ import (
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 )
 
+const (
+	// ResourceGroupAnnotationName tracks the name of a resource group a GoofyCluster cluster is linked to.
+	ResourceGroupAnnotationName = "goofycluster.infrastructure.cluster.x-k8s.io/resourceGroup"
+
+	// ClusterFinalizer allows GoofyClusterReconciler to clean up resources associated with GoofyCluster before
+	// removing it from the API server.
+	ClusterFinalizer = "goofycluster.infrastructure.cluster.x-k8s.io"
+)
+
 type GoofyClusterSpec struct {
 	// ControlPlaneEndpoint represents the endpoint used to communicate with the control plane.
 	// +optional
