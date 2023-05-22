@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	cmanager "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/manager"
+	"github.com/go-logr/logr"
+	"github.com/pkg/errors"
 	pb "go.etcd.io/etcd/api/v3/etcdserverpb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
@@ -16,10 +18,12 @@ import (
 type ResourceGroupResolver func(host string) (string, error)
 
 // NewEtcdServerHandler returns an http.Handler for fake etcd members.
-func NewEtcdServerHandler(manager cmanager.Manager, resolver ResourceGroupResolver) http.Handler {
+func NewEtcdServerHandler(manager cmanager.Manager, log logr.Logger, resolver ResourceGroupResolver) http.Handler {
 	svr := grpc.NewServer()
 
 	mySvc := &clusterServerService{
+		manager:               manager,
+		log:                   log,
 		resourceGroupResolver: resolver,
 	}
 	pb.RegisterClusterServer(svr, mySvc)
@@ -30,22 +34,8 @@ func NewEtcdServerHandler(manager cmanager.Manager, resolver ResourceGroupResolv
 // clusterServerService implements the ClusterServer grpc server.
 type clusterServerService struct {
 	manager               cmanager.Manager
+	log                   logr.Logger
 	resourceGroupResolver ResourceGroupResolver
-}
-
-func (c clusterServerService) getResourceGroupAndMember(ctx context.Context) (resourceGroup string, etcdMember string, err error) {
-	localAddr := ctx.Value(http.LocalAddrContextKey)
-	resourceGroup, err = c.resourceGroupResolver(fmt.Sprintf("%s", localAddr))
-	if err != nil {
-		return
-	}
-
-	md, ok := metadata.FromIncomingContext(ctx)
-	if !ok {
-
-	}
-	etcdMember = strings.Join(md.Get(":authority"), ",")
-	return
 }
 
 func (c clusterServerService) MemberAdd(ctx context.Context, request *pb.MemberAddRequest) (*pb.MemberAddResponse, error) {
@@ -67,10 +57,10 @@ func (c clusterServerService) MemberUpdate(ctx context.Context, request *pb.Memb
 func (c clusterServerService) MemberList(ctx context.Context, request *pb.MemberListRequest) (*pb.MemberListResponse, error) {
 	resourceGroup, etcdMember, err := c.getResourceGroupAndMember(ctx)
 	if err != nil {
-
+		return nil, err
 	}
 
-	fmt.Println("Works!", resourceGroup, etcdMember)
+	c.log.Info("Etcd Works!", "resourceGroup", resourceGroup, "etcdMember", etcdMember)
 
 	return &pb.MemberListResponse{}, nil
 }
@@ -78,4 +68,19 @@ func (c clusterServerService) MemberList(ctx context.Context, request *pb.Member
 func (c clusterServerService) MemberPromote(ctx context.Context, request *pb.MemberPromoteRequest) (*pb.MemberPromoteResponse, error) {
 	// TODO implement me
 	panic("implement me")
+}
+
+func (c clusterServerService) getResourceGroupAndMember(ctx context.Context) (resourceGroup string, etcdMember string, err error) {
+	localAddr := ctx.Value(http.LocalAddrContextKey)
+	resourceGroup, err = c.resourceGroupResolver(fmt.Sprintf("%s", localAddr))
+	if err != nil {
+		return
+	}
+
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return resourceGroup, "", errors.Errorf("failed to get metadata when processing request to etcd in resourceGroup %s", resourceGroup)
+	}
+	etcdMember = strings.Join(md.Get(":authority"), ",")
+	return
 }

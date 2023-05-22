@@ -23,7 +23,10 @@ import (
 	"time"
 )
 
-var scheme = runtime.NewScheme()
+var (
+	ctx    = context.Background()
+	scheme = runtime.NewScheme()
+)
 
 func init() {
 	_ = metav1.AddMetaToScheme(scheme)
@@ -38,6 +41,16 @@ func TestAPI_CRUD(t *testing.T) {
 
 	// InfraCluster controller >> when "creating the load balancer"
 	wcl1 := "workload-cluster1"
+
+	manager.AddResourceGroup(wcl1)
+	cc := manager.GetResourceGroup(wcl1).GetClient()
+
+	// TODO: move this down and create using the handler
+	nc := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "foo"},
+	}
+	cc.Create(ctx, nc)
+
 	listener, err := wcmux.InitWorkloadClusterListener(wcl1)
 	require.NoError(t, err)
 	require.Equal(t, listener.Host(), host)
@@ -59,34 +72,31 @@ func TestAPI_CRUD(t *testing.T) {
 	err = wcmux.AddEtcdMember(wcl1, etcdPodMember1, etcdCert, etcdKey)
 	require.NoError(t, err)
 
-	// Test API
-
+	// Test API using a controller runtime client to call IT
 	c, err := listener.GetClient()
-	require.NoError(t, err)
-
-	// list
-
-	nl := &corev1.NodeList{}
-	err = c.List(context.TODO(), nl)
-	require.NoError(t, err)
-
-	// get
-
-	n := &corev1.Node{}
-	err = c.Get(context.TODO(), client.ObjectKey{Name: "foo"}, n)
 	require.NoError(t, err)
 
 	// create
 
 	// TODO: create
 
+	// list
+
+	nl := &corev1.NodeList{}
+	err = c.List(ctx, nl)
+	require.NoError(t, err)
+
+	// get
+
+	n := &corev1.Node{}
+	err = c.Get(ctx, client.ObjectKey{Name: "foo"}, n)
+	require.NoError(t, err)
+
 	// patch
-	// note: strategjc merge patch will behave like traditional patch (ok for the use cases saw so far)
-	//       ssa patch will behave like traditional patch or something similar.
 
 	n2 := n.DeepCopy()
 	n2.Annotations = map[string]string{"foo": "bar"}
-	err = c.Patch(context.TODO(), n2, client.MergeFrom(n))
+	err = c.Patch(ctx, n2, client.MergeFrom(n))
 	require.NoError(t, err)
 
 	n3 := n2.DeepCopy()
@@ -98,30 +108,12 @@ func TestAPI_CRUD(t *testing.T) {
 		taints = append(taints, taint)
 	}
 	n3.Spec.Taints = taints
-	err = c.Patch(context.TODO(), n3, client.StrategicMergeFrom(n2))
+	err = c.Patch(ctx, n3, client.StrategicMergeFrom(n2))
 	require.NoError(t, err)
-
-	/*
-		n4 := n.DeepCopy()
-		patchOptions := []client.PatchOption{
-			client.ForceOwnership,
-			client.FieldOwner("obj-manager"),
-			client.DryRunAll,
-		}
-		err = c.Patch(ctx, n4, client.Apply, patchOptions...)
-		require.NoError(t, err)
-
-		patchOptions = []client.PatchOption{
-			client.ForceOwnership,
-			client.FieldOwner("obj-manager"),
-		}
-		err = c.Patch(ctx, n4, client.Apply, patchOptions...)
-		require.NoError(t, err)
-	*/
 
 	// delete
 
-	err = c.Delete(context.TODO(), n)
+	err = c.Delete(ctx, n)
 	require.NoError(t, err)
 }
 
@@ -169,12 +161,12 @@ func TestAPI_PortForward(t *testing.T) {
 	dialer1, err := proxy.NewDialer(p1)
 	require.NoError(t, err)
 
-	rawConn, err := dialer1.DialContextWithAddr(context.Background(), "kube-apiserver-foo")
+	rawConn, err := dialer1.DialContextWithAddr(ctx, "kube-apiserver-foo")
 	require.NoError(t, err)
 	defer rawConn.Close()
 
 	conn := tls.Client(rawConn, &tls.Config{InsecureSkipVerify: true}) //nolint:gosec // Intentionally not verifying the server cert here.
-	err = conn.HandshakeContext(context.Background())
+	err = conn.HandshakeContext(ctx)
 	require.NoError(t, err)
 	defer conn.Close()
 
@@ -216,7 +208,7 @@ func TestAPI_PortForward(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = etcdClient1.MemberList(context.Background())
+	_, err = etcdClient1.MemberList(ctx)
 	require.NoError(t, err)
 
 	err = etcdClient1.Close()

@@ -54,3 +54,7 @@ func (c *cachedClient) Delete(_ context.Context, obj client.Object) error {
 func (c *cachedClient) Update(_ context.Context, obj client.Object) error {
 	return c.cache.Update(c.resourceGroup, obj)
 }
+
+func (c *cachedClient) Patch(_ context.Context, obj client.Object, patch client.Patch) error {
+	return c.cache.Patch(c.resourceGroup, obj, patch)
+}

@@ -22,36 +22,36 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 )
 
-func (c *GoofyCluster) SetupWebhookWithManager(mgr ctrl.Manager) error {
+func (c *GoofyMachine) SetupWebhookWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewWebhookManagedBy(mgr).
 		For(c).
 		Complete()
 }
 
-// +kubebuilder:webhook:verbs=create;update,path=/mutate-infrastructure-cluster-x-k8s-io-v1alpha1-goofycluster,mutating=true,failurePolicy=fail,matchPolicy=Equivalent,groups=infrastructure.cluster.x-k8s.io,resources=goofyclusters,versions=v1alpha1,name=default.goofycluster.infrastructure.cluster.x-k8s.io,sideEffects=None,admissionReviewVersions=v1;v1beta1
+// +kubebuilder:webhook:verbs=create;update,path=/mutate-infrastructure-cluster-x-k8s-io-v1alpha1-goofymachine,mutating=true,failurePolicy=fail,matchPolicy=Equivalent,groups=infrastructure.cluster.x-k8s.io,resources=goofymachines,versions=v1alpha1,name=default.goofymachine.infrastructure.cluster.x-k8s.io,sideEffects=None,admissionReviewVersions=v1;v1beta1
 
-var _ webhook.Defaulter = &GoofyCluster{}
+var _ webhook.Defaulter = &GoofyMachine{}
 
 // Default implements webhook.Defaulter so a webhook will be registered for the type.
-func (c *GoofyCluster) Default() {
+func (c *GoofyMachine) Default() {
 
 }
 
-// +kubebuilder:webhook:verbs=create;update,path=/validate-infrastructure-cluster-x-k8s-io-v1alpha1-goofycluster,mutating=false,failurePolicy=fail,matchPolicy=Equivalent,groups=infrastructure.cluster.x-k8s.io,resources=goofyclusters,versions=v1alpha1,name=validation.goofycluster.infrastructure.cluster.x-k8s.io,sideEffects=None,admissionReviewVersions=v1;v1beta1
+// +kubebuilder:webhook:verbs=create;update,path=/validate-infrastructure-cluster-x-k8s-io-v1alpha1-goofymachine,mutating=false,failurePolicy=fail,matchPolicy=Equivalent,groups=infrastructure.cluster.x-k8s.io,resources=goofymachines,versions=v1alpha1,name=validation.goofymachine.infrastructure.cluster.x-k8s.io,sideEffects=None,admissionReviewVersions=v1;v1beta1
 
-var _ webhook.Validator = &GoofyCluster{}
+var _ webhook.Validator = &GoofyMachine{}
 
 // ValidateCreate implements webhook.Validator so a webhook will be registered for the type.
-func (c *GoofyCluster) ValidateCreate() error {
+func (c *GoofyMachine) ValidateCreate() error {
 	return nil
 }
 
 // ValidateUpdate implements webhook.Validator so a webhook will be registered for the type.
-func (c *GoofyCluster) ValidateUpdate(_ runtime.Object) error {
+func (c *GoofyMachine) ValidateUpdate(_ runtime.Object) error {
 	return nil
 }
 
 // ValidateDelete implements webhook.Validator so a webhook will be registered for the type.
-func (c *GoofyCluster) ValidateDelete() error {
+func (c *GoofyMachine) ValidateDelete() error {
 	return nil
 }

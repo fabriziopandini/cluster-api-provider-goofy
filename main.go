@@ -21,6 +21,9 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud"
+	cloudv1 "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/api/v1alpha1"
+	"github.com/fabriziopandini/cluster-api-provider-goofy/pkg/server"
 	"net/http"
 	_ "net/http/pprof"
 	"os"
@@ -52,8 +55,9 @@ import (
 )
 
 var (
-	scheme   = runtime.NewScheme()
-	setupLog = ctrl.Log.WithName("setup")
+	scheme      = runtime.NewScheme()
+	cloudScheme = runtime.NewScheme()
+	setupLog    = ctrl.Log.WithName("setup")
 
 	// flags.
 	metricsBindAddr             string
@@ -77,11 +81,14 @@ var (
 )
 
 func init() {
+	// scheme used for operating on the management cluster.
 	_ = clientgoscheme.AddToScheme(scheme)
-
 	_ = clusterv1.AddToScheme(scheme)
 	_ = infrav1.AddToScheme(scheme)
-	// +kubebuilder:scaffold:scheme
+
+	// scheme used for operating on the cloud resource.
+	_ = cloudv1.AddToScheme(cloudScheme)
+	_ = corev1.AddToScheme(cloudScheme)
 }
 
 // InitFlags initializes the flags.
@@ -235,11 +242,35 @@ func setupIndexes(ctx context.Context, mgr ctrl.Manager) {
 }
 
 func setupReconcilers(ctx context.Context, mgr ctrl.Manager) {
+	// start cloud manager
+	cloudMgr := cloud.NewManager(cloudScheme)
+	if err := cloudMgr.Start(ctx); err != nil {
+		setupLog.Error(err, "unable to start a cloud manager")
+		os.Exit(1)
+	}
+
+	// start an http server
+	podIP := os.Getenv("POD_IP")
+	apiServerMux := server.NewWorkloadClustersMux(cloudMgr, podIP)
+
+	// setup reconcilers
 	if err := (&controllers.GoofyClusterReconciler{
 		Client:           mgr.GetClient(),
+		CloudMgr:         cloudMgr,
+		ApiServerMux:     apiServerMux,
 		WatchFilterValue: watchFilterValue,
 	}).SetupWithManager(ctx, mgr, concurrency(clusterConcurrency)); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "GoofyCluster")
+		os.Exit(1)
+	}
+
+	if err := (&controllers.GoofyMachineReconciler{
+		Client:           mgr.GetClient(),
+		CloudMgr:         cloudMgr,
+		ApiServerMux:     apiServerMux,
+		WatchFilterValue: watchFilterValue,
+	}).SetupWithManager(ctx, mgr, concurrency(machineConcurrency)); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "GoofyMachine")
 		os.Exit(1)
 	}
 }
@@ -247,6 +278,16 @@ func setupReconcilers(ctx context.Context, mgr ctrl.Manager) {
 func setupWebhooks(mgr ctrl.Manager) {
 	if err := (&infrav1.GoofyCluster{}).SetupWebhookWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create webhook", "webhook", "GoofyCluster")
+		os.Exit(1)
+	}
+
+	if err := (&infrav1.GoofyMachine{}).SetupWebhookWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create webhook", "webhook", "GoofyMachine")
+		os.Exit(1)
+	}
+
+	if err := (&infrav1.GoofyMachineTemplate{}).SetupWebhookWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create webhook", "webhook", "GoofyMachineTemplate")
 		os.Exit(1)
 	}
 }

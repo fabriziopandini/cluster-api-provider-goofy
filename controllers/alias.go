@@ -19,6 +19,8 @@ package controllers
 
 import (
 	"context"
+	"github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud"
+	"github.com/fabriziopandini/cluster-api-provider-goofy/pkg/server"
 
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -30,9 +32,11 @@ import (
 // Following types provides access to reconcilers implemented in internal/controllers, thus
 // allowing users to provide a single binary "batteries included" with Cluster API and providers of choice.
 
-// GoofyClusterReconciler reconciles a DockerMachine object.
+// GoofyClusterReconciler reconciles a GoofyCluster object.
 type GoofyClusterReconciler struct {
-	Client client.Client
+	Client       client.Client
+	CloudMgr     cloud.Manager
+	ApiServerMux *server.WorkloadClustersMux // TODO: find a way to use an interface here
 
 	// WatchFilterValue is the label value used to filter events prior to reconciliation.
 	WatchFilterValue string
@@ -42,6 +46,28 @@ type GoofyClusterReconciler struct {
 func (r *GoofyClusterReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager, options controller.Options) error {
 	return (&goofycontrollers.GoofyClusterReconciler{
 		Client:           r.Client,
+		CloudMgr:         r.CloudMgr,
+		ApiServerMux:     r.ApiServerMux,
+		WatchFilterValue: r.WatchFilterValue,
+	}).SetupWithManager(ctx, mgr, options)
+}
+
+// GoofyMachineReconciler reconciles a GoofyMachine object.
+type GoofyMachineReconciler struct {
+	Client       client.Client
+	CloudMgr     cloud.Manager
+	ApiServerMux *server.WorkloadClustersMux // TODO: find a way to use an interface here
+
+	// WatchFilterValue is the label value used to filter events prior to reconciliation.
+	WatchFilterValue string
+}
+
+// SetupWithManager sets up the reconciler with the Manager.
+func (r *GoofyMachineReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager, options controller.Options) error {
+	return (&goofycontrollers.GoofyMachineReconciler{
+		Client:           r.Client,
+		CloudMgr:         r.CloudMgr,
+		ApiServerMux:     r.ApiServerMux,
 		WatchFilterValue: r.WatchFilterValue,
 	}).SetupWithManager(ctx, mgr, options)
 }
