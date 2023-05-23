@@ -5,7 +5,7 @@ go 1.19
 require (
 	github.com/emicklei/go-restful/v3 v3.9.0
 	github.com/evanphx/json-patch/v5 v5.6.0
-	github.com/go-logr/logr v1.2.3
+	github.com/go-logr/logr v1.2.4
 	github.com/pkg/errors v0.9.1
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.8.3
