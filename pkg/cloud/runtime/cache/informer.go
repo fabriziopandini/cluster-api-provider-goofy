@@ -5,14 +5,18 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
+	"sync"
 )
 
 type informer struct {
 	handlers []InformEventHandler
+	lock     sync.RWMutex
 }
 
 func (i *informer) AddEventHandler(handler InformEventHandler) error {
-	// TODO(fabrizio): we probably should lock here as well. TBD If c.lock or a separate one
+	i.lock.Lock()
+	defer i.lock.Unlock()
+
 	i.handlers = append(i.handlers, handler)
 	return nil
 }
@@ -39,7 +43,11 @@ func (c *cache) informCreate(resourceGroup string, obj client.Object) {
 	defer c.lock.RUnlock()
 
 	if i, ok := c.informers[obj.GetObjectKind().GroupVersionKind()]; ok {
-		for _, h := range i.(*informer).handlers {
+		i := i.(*informer)
+		i.lock.RLock()
+		defer i.lock.RUnlock()
+
+		for _, h := range i.handlers {
 			h.OnCreate(resourceGroup, obj)
 		}
 	}
@@ -50,7 +58,11 @@ func (c *cache) informUpdate(resourceGroup string, oldRes, newRes client.Object)
 	defer c.lock.RUnlock()
 
 	if i, ok := c.informers[newRes.GetObjectKind().GroupVersionKind()]; ok {
-		for _, h := range i.(*informer).handlers {
+		i := i.(*informer)
+		i.lock.RLock()
+		defer i.lock.RUnlock()
+
+		for _, h := range i.handlers {
 			h.OnUpdate(resourceGroup, oldRes, newRes)
 		}
 	}
@@ -61,7 +73,11 @@ func (c *cache) informDelete(resourceGroup string, obj client.Object) {
 	defer c.lock.RUnlock()
 
 	if i, ok := c.informers[obj.GetObjectKind().GroupVersionKind()]; ok {
-		for _, h := range i.(*informer).handlers {
+		i := i.(*informer)
+		i.lock.RLock()
+		defer i.lock.RUnlock()
+
+		for _, h := range i.handlers {
 			h.OnDelete(resourceGroup, obj)
 		}
 	}
@@ -72,7 +88,11 @@ func (c *cache) informSync(resourceGroup string, obj client.Object) {
 	defer c.lock.RUnlock()
 
 	if i, ok := c.informers[obj.GetObjectKind().GroupVersionKind()]; ok {
-		for _, h := range i.(*informer).handlers {
+		i := i.(*informer)
+		i.lock.RLock()
+		defer i.lock.RUnlock()
+
+		for _, h := range i.handlers {
 			h.OnGeneric(resourceGroup, obj)
 		}
 	}

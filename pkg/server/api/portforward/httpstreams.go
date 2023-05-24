@@ -3,11 +3,12 @@ package portforward
 import (
 	"context"
 	"fmt"
+	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
 	"io"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/httpstream"
-	"log"
+	"k8s.io/klog/v2"
 	"strconv"
 	"sync"
 	"time"
@@ -54,7 +55,7 @@ type HttpStreamHandler interface {
 // httpStreamHandler is capable of processing multiple port forward
 // requests over a single httpstream.Connection.
 type httpStreamHandler struct {
-	logger                *log.Logger
+	log                   logr.Logger
 	conn                  httpstream.Connection
 	streamChan            chan httpstream.Stream
 	streamPairsLock       sync.RWMutex
@@ -78,25 +79,25 @@ type PortForwarder func(ctx context.Context, podName, podNamespace, port string,
 //   - it is required to wait for both the stream before stating the actual part forward.
 //   - streams pair are kept around until the operation completes.
 func (h *httpStreamHandler) Run(ctx context.Context) {
-	log.Println("Connection waiting for port forward streams", "connection", h.conn)
+	h.log.V(4).Info("Port-forward: connection waiting for streams", "pod", klog.KRef(h.podNamespace, h.podName))
 Loop:
 	for {
 		select {
 		case <-h.conn.CloseChan():
-			log.Println("Connection upgraded connection closed", "connection", h.conn)
+			h.log.V(4).Info("Port-forward: connection closed", "pod", klog.KRef(h.podNamespace, h.podName))
 			break Loop
 		case stream := <-h.streamChan:
 			requestID := h.requestID(stream)
 			streamType := stream.Headers().Get(corev1.StreamType)
-			log.Println("Connection request received new type of stream", "connection", h.conn, "request", requestID, "streamType", streamType)
+			h.log.V(4).Info("Port-forward: connection request received new type of stream", "pod", klog.KRef(h.podNamespace, h.podName), "request", requestID, "streamType", streamType)
 
 			p, created := h.getStreamPair(requestID)
 			if created {
 				go h.monitorStreamPair(p, time.After(h.streamCreationTimeout))
 			}
 			if complete, err := p.add(stream); err != nil {
+				h.log.Error(err, "Port-forward: error processing stream", "pod", klog.KRef(h.podNamespace, h.podName), "request", requestID, "streamType", streamType)
 				err := fmt.Errorf("error processing stream for request %s: %w", requestID, err)
-				log.Println("add stream", err.Error())
 				p.printError(err.Error())
 			} else if complete {
 				go h.portForward(ctx, p)
@@ -109,7 +110,7 @@ Loop:
 func (h *httpStreamHandler) requestID(stream httpstream.Stream) string {
 	requestID := stream.Headers().Get(corev1.PortForwardRequestIDHeader)
 	if len(requestID) == 0 {
-		log.Println("Connection stream received without requestID header", "connection", h.conn)
+		h.log.V(4).Info("Port-forward: connection stream received without requestID header", "pod", klog.KRef(h.podNamespace, h.podName))
 		// If we get here, it's because the connection came from an older client
 		// that isn't generating the request id header
 		// (https://github.com/kubernetes/kubernetes/blob/843134885e7e0b360eb5441e85b1410a8b1a7a0c/pkg/client/unversioned/portforward/portforward.go#L258-L287)
@@ -135,8 +136,7 @@ func (h *httpStreamHandler) requestID(stream httpstream.Stream) string {
 		case corev1.StreamTypeData:
 			requestID = strconv.Itoa(int(stream.Identifier()) - 2)
 		}
-
-		log.Println("Connection automatically assigning request ID from stream type and stream ID", "connection", h.conn, "request", requestID, "streamType", streamType, "stream", stream.Identifier())
+		h.log.V(4).Info("Port-forward: connection automatically assigning request ID from stream type and stream ID", "pod", klog.KRef(h.podNamespace, h.podName), "request", requestID, "streamType", streamType, "stream", stream.Identifier())
 	}
 	return requestID
 }
@@ -149,11 +149,11 @@ func (h *httpStreamHandler) getStreamPair(requestID string) (*httpStreamPair, bo
 	defer h.streamPairsLock.Unlock()
 
 	if p, ok := h.streamPairs[requestID]; ok {
-		log.Println("Connection request found existing stream pair", "connection", h.conn, "request", requestID)
+		h.log.V(4).Info("Port-forward: connection request found existing stream pair", "pod", klog.KRef(h.podNamespace, h.podName), "request", requestID)
 		return p, false
 	}
 
-	log.Println("Connection request creating new stream pair", "connection", h.conn, "request", requestID)
+	h.log.V(4).Info("Port-forward: connection request creating new stream pair", "pod", klog.KRef(h.podNamespace, h.podName), "request", requestID)
 
 	p := newPortForwardPair(requestID)
 	h.streamPairs[requestID] = p
@@ -168,10 +168,10 @@ func (h *httpStreamHandler) monitorStreamPair(p *httpStreamPair, timeout <-chan 
 	select {
 	case <-timeout:
 		err := fmt.Errorf("(conn=%v, request=%s) timed out waiting for streams", h.conn, p.requestID)
-		log.Println("timeout", err.Error())
+		h.log.Error(err, "Port-forward: error processing stream", "pod", klog.KRef(h.podNamespace, h.podName), "request", p.requestID)
 		p.printError(err.Error())
 	case <-p.complete:
-		log.Println("Connection request successfully received error and data streams", "connection", h.conn, "request", p.requestID)
+		h.log.V(4).Info("Port-forward: connection request successfully received error and data streams", "pod", klog.KRef(h.podNamespace, h.podName), "request", p.requestID)
 	}
 	h.removeStreamPair(p.requestID)
 }
@@ -208,13 +208,13 @@ func (h *httpStreamHandler) portForward(ctx context.Context, p *httpStreamPair) 
 
 	port := p.dataStream.Headers().Get(corev1.PortHeader)
 
-	log.Println("Connection request invoking forwarder.PortForward for port", "connection", h.conn, "request", p.requestID, "port", port)
+	h.log.Info("Port-forward: connection request invoking forwarder.PortForward", "pod", klog.KRef(h.podNamespace, h.podName), "request", p.requestID, "port", port)
 	err := h.forwarder(ctx, h.podName, h.podNamespace, port, p.dataStream)
-	log.Println("Connection request done invoking forwarder.PortForward for port", "connection", h.conn, "request", p.requestID, "port", port)
+	h.log.V(4).Info("Port-forward: connection request done invoking forwarder.PortForward", "pod", klog.KRef(h.podNamespace, h.podName), "request", p.requestID, "port", port)
 
 	if err != nil {
 		err := fmt.Errorf("error forwarding port %s to pod %s/%s: %w", port, h.podNamespace, h.podName, err)
-		log.Println("PortForward", err.Error())
+		h.log.Error(err, "Port-forward: error processing request", "pod", klog.KRef(h.podNamespace, h.podName), "request", p.requestID)
 		fmt.Fprint(p.errorStream, err.Error())
 	}
 }

@@ -3,7 +3,6 @@ package cache
 import (
 	"fmt"
 	jsonpatch "github.com/evanphx/json-patch/v5"
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"time"
@@ -91,13 +90,12 @@ func (c *cache) List(resourceGroup string, list client.ObjectList, opts ...clien
 		listOpts.ApplyOptions(opts)
 
 		for _, obj := range objects {
-			if listOpts.LabelSelector != nil && !listOpts.LabelSelector.Empty() {
-				objMeta, err := meta.Accessor(obj)
-				if err != nil {
-					return apierrors.NewInternalError(err)
-				}
+			if listOpts.Namespace != "" && obj.GetNamespace() != listOpts.Namespace {
+				continue
+			}
 
-				metaLabels := labels.Set(objMeta.GetLabels())
+			if listOpts.LabelSelector != nil && !listOpts.LabelSelector.Empty() {
+				metaLabels := labels.Set(obj.GetLabels())
 				if !listOpts.LabelSelector.Matches(metaLabels) {
 					continue
 				}
@@ -258,7 +256,7 @@ func (c *cache) Patch(resourceGroup string, obj client.Object, patch client.Patc
 
 	patchData, err := patch.Data(obj)
 
-	encoder, err := c.getEncoder(obj, corev1.SchemeGroupVersion)
+	encoder, err := c.getEncoder(obj, obj.GetObjectKind().GroupVersionKind().GroupVersion())
 	if err != nil {
 		return apierrors.NewInternalError(err)
 	}

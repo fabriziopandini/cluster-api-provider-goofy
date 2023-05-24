@@ -2,11 +2,12 @@ package server
 
 import (
 	"context"
-	"crypto/rand"
+	cryptorand "crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"fmt"
 	cmanager "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/manager"
 	"github.com/fabriziopandini/cluster-api-provider-goofy/pkg/server/proxy"
 	"github.com/pkg/errors"
@@ -14,9 +15,11 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"google.golang.org/grpc"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"math/big"
+	"math/rand"
 	"sigs.k8s.io/cluster-api/util/certs"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"testing"
@@ -31,9 +34,10 @@ var (
 func init() {
 	_ = metav1.AddMetaToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
+	_ = rbacv1.AddToScheme(scheme)
 }
 
-func TestAPI_CRUD(t *testing.T) {
+func TestAPI_corev1_CRUD(t *testing.T) {
 	manager := cmanager.New(scheme)
 
 	host := "127.0.0.1"
@@ -117,6 +121,79 @@ func TestAPI_CRUD(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestAPI_rbacv1_CRUD(t *testing.T) {
+	manager := cmanager.New(scheme)
+
+	host := "127.0.0.1"
+	wcmux := NewWorkloadClustersMux(manager, host)
+
+	// InfraCluster controller >> when "creating the load balancer"
+	wcl1 := "workload-cluster1"
+
+	manager.AddResourceGroup(wcl1)
+	cc := manager.GetResourceGroup(wcl1).GetClient()
+
+	// TODO: move this down and create using the handler
+	nc := &rbacv1.ClusterRole{
+		ObjectMeta: metav1.ObjectMeta{Name: "foo"},
+	}
+	err := cc.Create(ctx, nc)
+	require.NoError(t, err)
+
+	listener, err := wcmux.InitWorkloadClusterListener(wcl1)
+	require.NoError(t, err)
+	require.Equal(t, listener.Host(), host)
+	require.NotEmpty(t, listener.Port())
+
+	caCert, caKey, err := newCertificateAuthority()
+	require.NoError(t, err)
+
+	// InfraMachine controller >> when "creating the API Server pod"
+	apiServerPod1 := "kube-apiserver-1"
+	err = wcmux.AddAPIServer(wcl1, apiServerPod1, caCert, caKey)
+	require.NoError(t, err)
+
+	etcdCert, etcdKey, err := newCertificateAuthority()
+	require.NoError(t, err)
+
+	// InfraMachine controller >> when "creating the Etcd member pod"
+	etcdPodMember1 := "etcd-1"
+	err = wcmux.AddEtcdMember(wcl1, etcdPodMember1, etcdCert, etcdKey)
+	require.NoError(t, err)
+
+	// Test API using a controller runtime client to call IT
+	c, err := listener.GetClient()
+	require.NoError(t, err)
+
+	// create
+
+	// TODO: create
+
+	// list
+
+	nl := &rbacv1.ClusterRoleList{}
+	err = c.List(ctx, nl)
+	require.NoError(t, err)
+
+	// get
+
+	n := &rbacv1.ClusterRole{}
+	err = c.Get(ctx, client.ObjectKey{Name: "foo"}, n)
+	require.NoError(t, err)
+
+	// patch
+
+	n2 := n.DeepCopy()
+	n2.Annotations = map[string]string{"foo": "bar"}
+	err = c.Patch(ctx, n2, client.MergeFrom(n))
+	require.NoError(t, err)
+
+	// delete
+
+	err = c.Delete(ctx, n)
+	require.NoError(t, err)
+}
+
 func TestAPI_PortForward(t *testing.T) {
 	manager := cmanager.New(scheme)
 
@@ -144,6 +221,29 @@ func TestAPI_PortForward(t *testing.T) {
 	// InfraMachine controller >> when "creating the Etcd member pod"
 	etcdPodMember1 := "etcd-1"
 	err = wcmux.AddEtcdMember(wcl1, etcdPodMember1, etcdCert, etcdKey)
+	require.NoError(t, err)
+
+	// Setup resource group
+	manager.AddResourceGroup("workload-cluster1")
+
+	etcdPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: metav1.NamespaceSystem,
+			Name:      etcdPodMember1,
+			Labels: map[string]string{
+				"component": "etcd",
+				"tier":      "control-plane",
+			},
+			Annotations: map[string]string{
+				// TODO: read this from existing etcd pods, if any.
+				"etcd.internal.goofy.cluster.x-k8s.io/cluster-id": fmt.Sprintf("%d", rand.Uint32()),
+				"etcd.internal.goofy.cluster.x-k8s.io/member-id":  fmt.Sprintf("%d", rand.Uint32()),
+				// TODO: set this only if there are no other leaders.
+				"etcd.internal.goofy.cluster.x-k8s.io/leader-from": time.Now().Format(time.RFC3339),
+			},
+		},
+	}
+	err = manager.GetResourceGroup("workload-cluster1").GetClient().Create(ctx, etcdPod)
 	require.NoError(t, err)
 
 	// Test API server TLS handshake via port forward.
@@ -253,7 +353,7 @@ func newSelfSignedCACert(key *rsa.PrivateKey) (*x509.Certificate, error) {
 		IsCA:                  true,
 	}
 
-	b, err := x509.CreateCertificate(rand.Reader, &tmpl, &tmpl, key.Public(), key)
+	b, err := x509.CreateCertificate(cryptorand.Reader, &tmpl, &tmpl, key.Public(), key)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to create self signed CA certificate: %+v", tmpl)
 	}

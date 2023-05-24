@@ -164,15 +164,19 @@ func (m *WorkloadClustersMux) getCertificate(info *tls.ClientHelloInfo) (*tls.Ce
 // HotRestart tries to setup the mux according to an existing sets of GoofyCluster.
 // NOTE: This is done at best effort in order to make iterative development workflow easier.
 func (m *WorkloadClustersMux) HotRestart(clusters *infrav1.GoofyClusterList) error {
+	if len(clusters.Items) == 0 {
+		return nil
+	}
+
 	m.lock.Lock()
 	defer m.lock.Unlock()
 
-	if len(m.workloadClusterListeners) >= 0 {
+	if len(m.workloadClusterListeners) > 0 {
 		return errors.New("WorkloadClustersMux cannot be hot restarted when there are already initialized listeners")
 	}
 
 	ports := sets.Set[int]{}
-	maxPort := 0
+	maxPort := minPort - 1
 	for _, c := range clusters.Items {
 		if c.Spec.ControlPlaneEndpoint.Host == "" {
 			continue
@@ -362,6 +366,17 @@ func (m *WorkloadClustersMux) AddEtcdMember(wclName, podName string, caCert *x50
 	}
 
 	return nil
+}
+
+func (m *WorkloadClustersMux) HasEtcdMember(wclName, podName string) bool {
+	m.lock.RLock()
+	defer m.lock.RUnlock()
+
+	wcl, ok := m.workloadClusterListeners[wclName]
+	if !ok {
+		return false
+	}
+	return wcl.etcdMembers.Has(podName)
 }
 
 // ListProviders implements api.DebugInfoProvider.
