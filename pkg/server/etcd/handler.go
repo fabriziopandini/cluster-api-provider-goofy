@@ -3,14 +3,20 @@ package etcd
 import (
 	"context"
 	"fmt"
+	cclient "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/client"
 	cmanager "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/manager"
 	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
 	pb "go.etcd.io/etcd/api/v3/etcdserverpb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"net/http"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // ResourceGroupResolver defines a func that can identify which workloadCluster/resourceGroup a
@@ -21,58 +27,127 @@ type ResourceGroupResolver func(host string) (string, error)
 func NewEtcdServerHandler(manager cmanager.Manager, log logr.Logger, resolver ResourceGroupResolver) http.Handler {
 	svr := grpc.NewServer()
 
-	mySvc := &clusterServerService{
+	baseSvr := &baseServer{
 		manager:               manager,
 		log:                   log,
 		resourceGroupResolver: resolver,
 	}
-	pb.RegisterClusterServer(svr, mySvc)
+
+	clusterServerSrv := &clusterServerServer{
+		baseServer: baseSvr,
+	}
+	pb.RegisterClusterServer(svr, clusterServerSrv)
+
+	maintenanceSrv := &maintenanceServer{
+		baseServer: baseSvr,
+	}
+	pb.RegisterMaintenanceServer(svr, maintenanceSrv)
 
 	return svr
 }
 
-// clusterServerService implements the ClusterServer grpc server.
-type clusterServerService struct {
+// clusterServerServer implements the MaintenanceServer grpc server.
+type maintenanceServer struct {
+	*baseServer
+}
+
+func (m *maintenanceServer) Alarm(ctx context.Context, request *pb.AlarmRequest) (*pb.AlarmResponse, error) {
+	resourceGroup, etcdMember, err := m.getResourceGroupAndMember(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	m.log.Info("Etcd: Alarm", "resourceGroup", resourceGroup, "etcdMember", etcdMember)
+
+	return &pb.AlarmResponse{}, nil
+}
+
+func (m *maintenanceServer) Status(ctx context.Context, request *pb.StatusRequest) (*pb.StatusResponse, error) {
+	resourceGroup, etcdMember, err := m.getResourceGroupAndMember(ctx)
+	if err != nil {
+		return nil, err
+	}
+	cloudClient := m.manager.GetResourceGroup(resourceGroup).GetClient()
+
+	m.log.Info("Etcd: Status", "resourceGroup", resourceGroup, "etcdMember", etcdMember)
+	_, statusResponse, err := m.inspectEtcd(ctx, cloudClient, etcdMember)
+	if err != nil {
+		return nil, err
+	}
+
+	return statusResponse, nil
+}
+
+func (m *maintenanceServer) Defragment(ctx context.Context, request *pb.DefragmentRequest) (*pb.DefragmentResponse, error) {
+	panic("implement me")
+}
+
+func (m *maintenanceServer) Hash(ctx context.Context, request *pb.HashRequest) (*pb.HashResponse, error) {
+	panic("implement me")
+}
+
+func (m *maintenanceServer) HashKV(ctx context.Context, request *pb.HashKVRequest) (*pb.HashKVResponse, error) {
+	panic("implement me")
+}
+
+func (m *maintenanceServer) Snapshot(request *pb.SnapshotRequest, server pb.Maintenance_SnapshotServer) error {
+	panic("implement me")
+}
+
+func (m *maintenanceServer) MoveLeader(ctx context.Context, request *pb.MoveLeaderRequest) (*pb.MoveLeaderResponse, error) {
+	panic("implement me")
+}
+
+func (m *maintenanceServer) Downgrade(ctx context.Context, request *pb.DowngradeRequest) (*pb.DowngradeResponse, error) {
+	panic("implement me")
+}
+
+// clusterServerServer implements the ClusterServer grpc server.
+type clusterServerServer struct {
+	*baseServer
+}
+
+func (c *clusterServerServer) MemberAdd(ctx context.Context, request *pb.MemberAddRequest) (*pb.MemberAddResponse, error) {
+	panic("implement me")
+}
+
+func (c *clusterServerServer) MemberRemove(ctx context.Context, request *pb.MemberRemoveRequest) (*pb.MemberRemoveResponse, error) {
+	panic("implement me")
+}
+
+func (c *clusterServerServer) MemberUpdate(ctx context.Context, request *pb.MemberUpdateRequest) (*pb.MemberUpdateResponse, error) {
+	panic("implement me")
+}
+
+func (c *clusterServerServer) MemberList(ctx context.Context, request *pb.MemberListRequest) (*pb.MemberListResponse, error) {
+	resourceGroup, etcdMember, err := c.getResourceGroupAndMember(ctx)
+	if err != nil {
+		return nil, err
+	}
+	cloudClient := c.manager.GetResourceGroup(resourceGroup).GetClient()
+
+	c.log.Info("Etcd: MemberList", "resourceGroup", resourceGroup, "etcdMember", etcdMember)
+	memberList, _, err := c.inspectEtcd(ctx, cloudClient, etcdMember)
+	if err != nil {
+		return nil, err
+	}
+
+	return memberList, nil
+}
+
+func (c *clusterServerServer) MemberPromote(ctx context.Context, request *pb.MemberPromoteRequest) (*pb.MemberPromoteResponse, error) {
+	panic("implement me")
+}
+
+type baseServer struct {
 	manager               cmanager.Manager
 	log                   logr.Logger
 	resourceGroupResolver ResourceGroupResolver
 }
 
-func (c clusterServerService) MemberAdd(ctx context.Context, request *pb.MemberAddRequest) (*pb.MemberAddResponse, error) {
-	// TODO implement me
-
-	panic("implement me")
-}
-
-func (c clusterServerService) MemberRemove(ctx context.Context, request *pb.MemberRemoveRequest) (*pb.MemberRemoveResponse, error) {
-	// TODO implement me
-	panic("implement me")
-}
-
-func (c clusterServerService) MemberUpdate(ctx context.Context, request *pb.MemberUpdateRequest) (*pb.MemberUpdateResponse, error) {
-	// TODO implement me
-	panic("implement me")
-}
-
-func (c clusterServerService) MemberList(ctx context.Context, request *pb.MemberListRequest) (*pb.MemberListResponse, error) {
-	resourceGroup, etcdMember, err := c.getResourceGroupAndMember(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	c.log.Info("Etcd Works!", "resourceGroup", resourceGroup, "etcdMember", etcdMember)
-
-	return &pb.MemberListResponse{}, nil
-}
-
-func (c clusterServerService) MemberPromote(ctx context.Context, request *pb.MemberPromoteRequest) (*pb.MemberPromoteResponse, error) {
-	// TODO implement me
-	panic("implement me")
-}
-
-func (c clusterServerService) getResourceGroupAndMember(ctx context.Context) (resourceGroup string, etcdMember string, err error) {
+func (b *baseServer) getResourceGroupAndMember(ctx context.Context) (resourceGroup string, etcdMember string, err error) {
 	localAddr := ctx.Value(http.LocalAddrContextKey)
-	resourceGroup, err = c.resourceGroupResolver(fmt.Sprintf("%s", localAddr))
+	resourceGroup, err = b.resourceGroupResolver(fmt.Sprintf("%s", localAddr))
 	if err != nil {
 		return
 	}
@@ -81,6 +156,56 @@ func (c clusterServerService) getResourceGroupAndMember(ctx context.Context) (re
 	if !ok {
 		return resourceGroup, "", errors.Errorf("failed to get metadata when processing request to etcd in resourceGroup %s", resourceGroup)
 	}
-	etcdMember = strings.Join(md.Get(":authority"), ",")
+	etcdMember = strings.TrimPrefix(strings.Join(md.Get(":authority"), ","), "etcd-")
 	return
+}
+
+func (b *baseServer) inspectEtcd(ctx context.Context, cloudClient cclient.Client, etcdMember string) (*pb.MemberListResponse, *pb.StatusResponse, error) {
+	etcdPods := &corev1.PodList{}
+	if err := cloudClient.List(ctx, etcdPods,
+		client.InNamespace(metav1.NamespaceSystem),
+		client.MatchingLabels{
+			"component": "etcd",
+			"tier":      "control-plane"},
+	); err != nil {
+		return nil, nil, errors.Wrap(err, "failed to list etcd members")
+	}
+
+	memberList := &pb.MemberListResponse{}
+	statusResponse := &pb.StatusResponse{}
+	var leaderID int
+	var leaderFrom time.Time
+	for _, pod := range etcdPods.Items {
+		clusterID, err := strconv.Atoi(pod.Annotations["etcd.internal.goofy.cluster.x-k8s.io/cluster-id"])
+		if err != nil {
+			return nil, nil, errors.Wrapf(err, "failed read cluster ID annotation from etcd member with name %s", pod.Name)
+		}
+		memberID, err := strconv.Atoi(pod.Annotations["etcd.internal.goofy.cluster.x-k8s.io/member-id"])
+		if err != nil {
+			return nil, nil, errors.Wrapf(err, "failed read member ID annotation from etcd member with name %s", pod.Name)
+		}
+
+		if t, err := time.Parse(time.RFC3339, pod.Annotations["etcd.internal.goofy.cluster.x-k8s.io/leader-from"]); err == nil {
+			if t.After(leaderFrom) {
+				leaderID = memberID
+				leaderFrom = t
+			}
+		}
+
+		if pod.Name == etcdMember {
+			memberList.Header = &pb.ResponseHeader{
+				ClusterId: uint64(clusterID),
+				MemberId:  uint64(memberID),
+			}
+
+			statusResponse.Header = memberList.Header
+		}
+		memberList.Members = append(memberList.Members, &pb.Member{
+			ID:   uint64(memberID),
+			Name: strings.TrimPrefix(pod.Name, "etcd-"),
+		})
+	}
+	statusResponse.Leader = uint64(leaderID)
+
+	return memberList, statusResponse, nil
 }

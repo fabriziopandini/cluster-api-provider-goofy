@@ -40,7 +40,7 @@ func apiServerCertificateConfig(controlPlaneIP string) *certs.Config {
 	}
 
 	return &certs.Config{
-		CommonName: "apiserver",
+		CommonName: "kube-apiserver",
 		AltNames:   *altNames,
 		Usages:     []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}

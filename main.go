@@ -24,6 +24,7 @@ import (
 	"github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud"
 	cloudv1 "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/api/v1alpha1"
 	"github.com/fabriziopandini/cluster-api-provider-goofy/pkg/server"
+	rbacv1 "k8s.io/api/rbac/v1"
 	"net/http"
 	_ "net/http/pprof"
 	"os"
@@ -89,6 +90,7 @@ func init() {
 	// scheme used for operating on the cloud resource.
 	_ = cloudv1.AddToScheme(cloudScheme)
 	_ = corev1.AddToScheme(cloudScheme)
+	_ = rbacv1.AddToScheme(cloudScheme)
 }
 
 // InitFlags initializes the flags.

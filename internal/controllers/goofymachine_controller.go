@@ -25,8 +25,10 @@ import (
 	cloudv1 "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/api/v1alpha1"
 	"github.com/fabriziopandini/cluster-api-provider-goofy/pkg/server"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
+	"math/rand"
 	"sigs.k8s.io/cluster-api/util/annotations"
 	"sigs.k8s.io/cluster-api/util/certs"
 	"sigs.k8s.io/cluster-api/util/conditions"
@@ -34,6 +36,7 @@ import (
 	"sigs.k8s.io/cluster-api/util/patch"
 	"sigs.k8s.io/cluster-api/util/secret"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"time"
 
 	"github.com/pkg/errors"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -219,13 +222,53 @@ func (r *GoofyMachineReconciler) reconcileNormal(ctx context.Context, cluster *c
 			},
 		},
 	}
+	if util.IsControlPlaneMachine(machine) {
+		if node.Labels == nil {
+			node.Labels = map[string]string{}
+		}
+		node.Labels["node-role.kubernetes.io/control-plane"] = ""
+	}
 	if err := cloudClient.Create(ctx, node); err != nil && !apierrors.IsAlreadyExists(err) {
 		return ctrl.Result{}, errors.Wrapf(err, "failed to create Node")
 	}
 
 	// If the machine is a control plane:
 	if util.IsControlPlaneMachine(machine) {
-		// If there  is not yer an API server for this machine.
+
+		// If there is not yet an etcd member listener for this machine.
+		etcdMember := fmt.Sprintf("etcd-%s", goofyMachine.Name)
+		if !r.ApiServerMux.HasEtcdMember(resourceGroup, etcdMember) {
+			// Getting the etcd CA
+			s, err := secret.Get(ctx, r.Client, client.ObjectKeyFromObject(cluster), secret.EtcdCA)
+			if err != nil {
+				return ctrl.Result{}, errors.Wrapf(err, "failed to get etcd CA")
+			}
+			certData, exists := s.Data[secret.TLSCrtDataName]
+			if !exists {
+				return ctrl.Result{}, errors.Errorf("invalid etcd CA: missing data for %s", secret.TLSCrtDataName)
+			}
+
+			cert, err := certs.DecodeCertPEM(certData)
+			if err != nil {
+				return ctrl.Result{}, errors.Wrapf(err, "invalid etcd CA: invalid %s", secret.TLSCrtDataName)
+			}
+
+			keyData, exists := s.Data[secret.TLSKeyDataName]
+			if !exists {
+				return ctrl.Result{}, errors.Errorf("invalid etcd CA: missing data for %s", secret.TLSCrtDataName)
+			}
+
+			key, err := certs.DecodePrivateKeyPEM(keyData)
+			if err != nil {
+				return ctrl.Result{}, errors.Wrapf(err, "invalid etcd CA: invalid %s", secret.TLSCrtDataName)
+			}
+
+			if err := r.ApiServerMux.AddEtcdMember(resourceGroup, etcdMember, cert, key.(*rsa.PrivateKey)); err != nil {
+				return ctrl.Result{}, errors.Wrap(err, "failed to start etcd member")
+			}
+		}
+
+		// If there is not yet an API server listener for this machine.
 		apiServer := fmt.Sprintf("kube-apiserver-%s", goofyMachine.Name)
 		if !r.ApiServerMux.HasAPIServer(resourceGroup, apiServer) {
 			// Getting the Kubernetes CA
@@ -259,8 +302,169 @@ func (r *GoofyMachineReconciler) reconcileNormal(ctx context.Context, cluster *c
 				return ctrl.Result{}, errors.Wrap(err, "failed to start API server")
 			}
 		}
+
+		// TBD is this is the right point in the sequence, the pod shows up after API server is running.
+
+		etcdPod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: metav1.NamespaceSystem,
+				Name:      etcdMember,
+			},
+			Status: corev1.PodStatus{
+				Phase: corev1.PodRunning,
+				Conditions: []corev1.PodCondition{
+					{
+						Type:   corev1.PodReady,
+						Status: corev1.ConditionTrue,
+					},
+				},
+			},
+		}
+		if err := cloudClient.Get(ctx, client.ObjectKeyFromObject(etcdPod), etcdPod); err != nil {
+			if !apierrors.IsNotFound(err) {
+				return ctrl.Result{}, errors.Wrapf(err, "failed to get etcdPod Pod")
+			}
+
+			etcdPod.Labels = map[string]string{
+				"component": "etcd",
+				"tier":      "control-plane",
+			}
+			etcdPod.Annotations = map[string]string{
+				// TODO: read this from existing etcd pods, if any.
+				"etcd.internal.goofy.cluster.x-k8s.io/cluster-id": fmt.Sprintf("%d", rand.Uint32()),
+				"etcd.internal.goofy.cluster.x-k8s.io/member-id":  fmt.Sprintf("%d", rand.Uint32()),
+				// TODO: set this only if there are no other leaders.
+				"etcd.internal.goofy.cluster.x-k8s.io/leader-from": time.Now().Format(time.RFC3339),
+			}
+
+			if err := cloudClient.Create(ctx, etcdPod); err != nil && !apierrors.IsAlreadyExists(err) {
+				return ctrl.Result{}, errors.Wrapf(err, "failed to create etcdPod Pod")
+			}
+		}
+
+		apiServerPod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: metav1.NamespaceSystem,
+				Name:      apiServer,
+				Labels: map[string]string{
+					"component": "kube-apiserver",
+					"tier":      "control-plane",
+				},
+			},
+			Status: corev1.PodStatus{
+				Phase: corev1.PodRunning,
+				Conditions: []corev1.PodCondition{
+					{
+						Type:   corev1.PodReady,
+						Status: corev1.ConditionTrue,
+					},
+				},
+			},
+		}
+		if err := cloudClient.Create(ctx, apiServerPod); err != nil && !apierrors.IsAlreadyExists(err) {
+			return ctrl.Result{}, errors.Wrapf(err, "failed to create apiServer Pod")
+		}
+
+		schedulerPod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: metav1.NamespaceSystem,
+				Name:      fmt.Sprintf("kube-scheduler-%s", goofyMachine.Name),
+				Labels: map[string]string{
+					"component": "kube-scheduler",
+					"tier":      "control-plane",
+				},
+			},
+			Status: corev1.PodStatus{
+				Phase: corev1.PodRunning,
+				Conditions: []corev1.PodCondition{
+					{
+						Type:   corev1.PodReady,
+						Status: corev1.ConditionTrue,
+					},
+				},
+			},
+		}
+		if err := cloudClient.Create(ctx, schedulerPod); err != nil && !apierrors.IsAlreadyExists(err) {
+			return ctrl.Result{}, errors.Wrapf(err, "failed to create scheduler Pod")
+		}
+
+		controllerManagerPod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: metav1.NamespaceSystem,
+				Name:      fmt.Sprintf("kube-controller-manager-%s", goofyMachine.Name),
+				Labels: map[string]string{
+					"component": "kube-controller-manager",
+					"tier":      "control-plane",
+				},
+			},
+			Status: corev1.PodStatus{
+				Phase: corev1.PodRunning,
+				Conditions: []corev1.PodCondition{
+					{
+						Type:   corev1.PodReady,
+						Status: corev1.ConditionTrue,
+					},
+				},
+			},
+		}
+		if err := cloudClient.Create(ctx, controllerManagerPod); err != nil && !apierrors.IsAlreadyExists(err) {
+			return ctrl.Result{}, errors.Wrapf(err, "failed to create controller manager Pod")
+		}
 	}
 
+	// create kubeadm ClusterRole and ClusterRoleBinding enforced by KCP
+	// TODO: drop this as soon as we implement CREATE
+
+	role := &rbacv1.ClusterRole{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "kubeadm:get-nodes",
+			// Namespace: metav1.NamespaceSystem, // TODO: drop in kubeadm?
+		},
+		Rules: []rbacv1.PolicyRule{
+			{
+				Verbs:     []string{"get"},
+				APIGroups: []string{""},
+				Resources: []string{"nodes"},
+			},
+		},
+	}
+	if err := cloudClient.Create(ctx, role); err != nil && !apierrors.IsAlreadyExists(err) {
+		return ctrl.Result{}, errors.Wrapf(err, "failed to create ClusterRole")
+	}
+
+	roleBinding := &rbacv1.ClusterRoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "kubeadm:get-nodes",
+			// Namespace: metav1.NamespaceSystem, // TODO: drop in kubeadm?
+		},
+		RoleRef: rbacv1.RoleRef{
+			APIGroup: rbacv1.GroupName,
+			Kind:     "ClusterRole",
+			Name:     "kubeadm:get-nodes",
+		},
+		Subjects: []rbacv1.Subject{
+			{
+				Kind: rbacv1.GroupKind,
+				Name: "system:bootstrappers:kubeadm:default-node-token",
+			},
+		},
+	}
+	if err := cloudClient.Create(ctx, roleBinding); err != nil && !apierrors.IsAlreadyExists(err) {
+		return ctrl.Result{}, errors.Wrapf(err, "failed to create ClusterRoleBinding")
+	}
+
+	// create kubeadm config map
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "kubeadm-config",
+			Namespace: metav1.NamespaceSystem,
+		},
+	}
+	if err := cloudClient.Create(ctx, cm); err != nil && !apierrors.IsAlreadyExists(err) {
+		return ctrl.Result{}, errors.Wrapf(err, "failed to create ConfigMap")
+	}
+
+	// NOTE: this can probably go up, after the VM is created
 	goofyMachine.Spec.ProviderID = &node.Spec.ProviderID
 	goofyMachine.Status.Ready = true
 
