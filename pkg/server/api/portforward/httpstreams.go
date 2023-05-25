@@ -3,26 +3,27 @@ package portforward
 import (
 	"context"
 	"fmt"
-	"github.com/go-logr/logr"
-	"github.com/pkg/errors"
 	"io"
-	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/util/httpstream"
-	"k8s.io/klog/v2"
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/go-logr/logr"
+	"github.com/pkg/errors"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/util/httpstream"
+	"k8s.io/klog/v2"
 )
 
-// HttpStreamReceived is the httpstream.NewStreamHandler for port
+// HTTPStreamReceived is the httpstream.NewStreamHandler for port
 // forward streams. It checks each stream's port and stream type headers,
 // rejecting any streams that with missing or invalid values. Each valid
 // stream is sent to the streams channel.
-func HttpStreamReceived(streamsCh chan httpstream.Stream) func(httpstream.Stream, <-chan struct{}) error {
+func HTTPStreamReceived(streamsCh chan httpstream.Stream) func(httpstream.Stream, <-chan struct{}) error {
 	return func(stream httpstream.Stream, replySent <-chan struct{}) error {
 		// make sure it has a valid stream type header
 		streamType := stream.Headers().Get(corev1.StreamType)
-		if len(streamType) == 0 {
+		if streamType == "" {
 			return fmt.Errorf("%q header is required", corev1.StreamType)
 		}
 		if streamType != corev1.StreamTypeError && streamType != corev1.StreamTypeData {
@@ -34,9 +35,9 @@ func HttpStreamReceived(streamsCh chan httpstream.Stream) func(httpstream.Stream
 	}
 }
 
-// NewHttpStreamHandler returns a new httpStreamHandler capable of processing multiple port forward
+// NewHTTPStreamHandler returns a new httpStreamHandler capable of processing multiple port forward
 // operations over a single httpstream.Connection.
-func NewHttpStreamHandler(conn httpstream.Connection, streamsCh chan httpstream.Stream, podName, podNamespace string, forwarder PortForwarder) HttpStreamHandler {
+func NewHTTPStreamHandler(conn httpstream.Connection, streamsCh chan httpstream.Stream, podName, podNamespace string, forwarder PortForwarder) HTTPStreamHandler {
 	return &httpStreamHandler{
 		conn:                  conn,
 		streamChan:            streamsCh,
@@ -48,7 +49,7 @@ func NewHttpStreamHandler(conn httpstream.Connection, streamsCh chan httpstream.
 	}
 }
 
-type HttpStreamHandler interface {
+type HTTPStreamHandler interface {
 	Run(ctx context.Context)
 }
 
@@ -69,7 +70,7 @@ type httpStreamHandler struct {
 // PortForwarder knows how to forward content from a data stream to/from a target (usually a port in a pod).
 type PortForwarder func(ctx context.Context, podName, podNamespace, port string, stream io.ReadWriteCloser) error
 
-// Run is the main loop for the HttpStreamHandler. It processes new
+// Run is the main loop for the HTTPStreamHandler. It processes new
 // streams, invoking portForward for each complete stream pair. The loop exits
 // when the httpstream.Connection is closed.
 //
@@ -109,7 +110,7 @@ Loop:
 // requestID returns the request id for stream.
 func (h *httpStreamHandler) requestID(stream httpstream.Stream) string {
 	requestID := stream.Headers().Get(corev1.PortForwardRequestIDHeader)
-	if len(requestID) == 0 {
+	if requestID == "" {
 		h.log.V(4).Info("Port-forward: connection stream received without requestID header", "pod", klog.KRef(h.podNamespace, h.podName))
 		// If we get here, it's because the connection came from an older client
 		// that isn't generating the request id header
@@ -176,16 +177,6 @@ func (h *httpStreamHandler) monitorStreamPair(p *httpStreamPair, timeout <-chan 
 	h.removeStreamPair(p.requestID)
 }
 
-// hasStreamPair returns a bool indicating if a stream pair for requestID
-// exists.
-func (h *httpStreamHandler) hasStreamPair(requestID string) bool {
-	h.streamPairsLock.RLock()
-	defer h.streamPairsLock.RUnlock()
-
-	_, ok := h.streamPairs[requestID]
-	return ok
-}
-
 // removeStreamPair removes the stream pair identified by requestID from streamPairs.
 func (h *httpStreamHandler) removeStreamPair(requestID string) {
 	h.streamPairsLock.Lock()
@@ -198,7 +189,7 @@ func (h *httpStreamHandler) removeStreamPair(requestID string) {
 	delete(h.streamPairs, requestID)
 }
 
-// portForward invokes the HttpStreamHandler's forwarder.PortForward
+// portForward invokes the HTTPStreamHandler's forwarder.PortForward
 // function for the given stream pair.
 func (h *httpStreamHandler) portForward(ctx context.Context, p *httpStreamPair) {
 	defer func() {
@@ -274,8 +265,8 @@ func (p *httpStreamPair) printError(s string) {
 	}
 }
 
-// HttpStreamTunnel create tunnels for two streams.
-func HttpStreamTunnel(ctx context.Context, c1, c2 io.ReadWriter) error {
+// HTTPStreamTunnel create tunnels for two streams.
+func HTTPStreamTunnel(ctx context.Context, c1, c2 io.ReadWriter) error {
 	buf1 := make([]byte, 32*1024) // TODO: check if we can make smaller buffers
 	buf2 := make([]byte, 32*1024)
 

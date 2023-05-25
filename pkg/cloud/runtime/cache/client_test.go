@@ -3,15 +3,17 @@ package cache
 import (
 	"context"
 	"fmt"
-	cloudv1 "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/api/v1alpha1"
+	"testing"
+	"time"
+
 	"github.com/stretchr/testify/require"
-	"k8s.io/apimachinery/pkg/api/errors"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/workqueue"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"testing"
-	"time"
+
+	cloudv1 "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/api/v1alpha1"
 )
 
 func Test_cache_client(t *testing.T) {
@@ -33,17 +35,17 @@ func Test_cache_client(t *testing.T) {
 			}
 			err := c.Create("", obj)
 			require.Error(t, err)
-			require.True(t, errors.IsBadRequest(err))
+			require.True(t, apierrors.IsBadRequest(err))
 		})
 
 		t.Run("fails if obj is nil", func(t *testing.T) {
 			err := c.Create("foo", nil)
 			require.Error(t, err)
-			require.True(t, errors.IsBadRequest(err))
+			require.True(t, apierrors.IsBadRequest(err))
 		})
 
 		t.Run("fails if unknown kind", func(t *testing.T) {
-			// TODO
+			// TODO implement test case
 		})
 
 		t.Run("fails if resourceGroup does not exist", func(t *testing.T) {
@@ -54,7 +56,7 @@ func Test_cache_client(t *testing.T) {
 			}
 			err := c.Create("bar", obj)
 			require.Error(t, err)
-			require.True(t, errors.IsBadRequest(err))
+			require.True(t, apierrors.IsBadRequest(err))
 		})
 
 		t.Run("create", func(t *testing.T) {
@@ -93,7 +95,7 @@ func Test_cache_client(t *testing.T) {
 			}
 			err := c.Create("foo", obj)
 			require.Error(t, err)
-			require.True(t, errors.IsAlreadyExists(err))
+			require.True(t, apierrors.IsAlreadyExists(err))
 		})
 
 		t.Run("Create with owner references", func(t *testing.T) {
@@ -112,7 +114,7 @@ func Test_cache_client(t *testing.T) {
 				}
 				err := c.Create("foo", obj)
 				require.Error(t, err)
-				require.True(t, errors.IsBadRequest(err))
+				require.True(t, apierrors.IsBadRequest(err))
 			})
 			t.Run("fails if referenced object does not exists", func(t *testing.T) {
 				obj := &cloudv1.CloudMachine{
@@ -129,7 +131,7 @@ func Test_cache_client(t *testing.T) {
 				}
 				err := c.Create("foo", obj)
 				require.Error(t, err)
-				require.True(t, errors.IsBadRequest(err))
+				require.True(t, apierrors.IsBadRequest(err))
 			})
 			t.Run("create updates ownedObjects", func(t *testing.T) {
 				createMachine(t, c, "foo", "parent")
@@ -168,38 +170,38 @@ func Test_cache_client(t *testing.T) {
 			obj := &cloudv1.CloudMachine{}
 			err := c.Get("", types.NamespacedName{Name: "foo"}, obj)
 			require.Error(t, err)
-			require.True(t, errors.IsBadRequest(err))
+			require.True(t, apierrors.IsBadRequest(err))
 		})
 
 		t.Run("fails if name is empty", func(t *testing.T) {
 			obj := &cloudv1.CloudMachine{}
 			err := c.Get("foo", types.NamespacedName{}, obj)
 			require.Error(t, err)
-			require.True(t, errors.IsBadRequest(err))
+			require.True(t, apierrors.IsBadRequest(err))
 		})
 
 		t.Run("fails if Object is nil", func(t *testing.T) {
 			err := c.Get("foo", types.NamespacedName{Name: "foo"}, nil)
 			require.Error(t, err)
-			require.True(t, errors.IsBadRequest(err))
+			require.True(t, apierrors.IsBadRequest(err))
 		})
 
 		t.Run("fails if unknown kind", func(t *testing.T) {
-			// TODO
+			// TODO implement test case
 		})
 
 		t.Run("fails if resourceGroup doesn't exist", func(t *testing.T) {
 			obj := &cloudv1.CloudLoadBalancer{}
 			err := c.Get("bar", types.NamespacedName{Name: "bar"}, obj)
 			require.Error(t, err)
-			require.True(t, errors.IsBadRequest(err))
+			require.True(t, apierrors.IsBadRequest(err))
 		})
 
 		t.Run("fails if gvk doesn't exist", func(t *testing.T) {
 			obj := &cloudv1.CloudLoadBalancer{}
 			err := c.Get("foo", types.NamespacedName{Name: "bar"}, obj)
 			require.Error(t, err)
-			require.True(t, errors.IsNotFound(err))
+			require.True(t, apierrors.IsNotFound(err))
 		})
 
 		t.Run("fails if Object doesn't exist", func(t *testing.T) {
@@ -208,7 +210,7 @@ func Test_cache_client(t *testing.T) {
 			obj := &cloudv1.CloudMachine{}
 			err := c.Get("foo", types.NamespacedName{Name: "bar"}, obj)
 			require.Error(t, err)
-			require.True(t, errors.IsNotFound(err))
+			require.True(t, apierrors.IsNotFound(err))
 		})
 
 		t.Run("get", func(t *testing.T) {
@@ -235,24 +237,24 @@ func Test_cache_client(t *testing.T) {
 			obj := &cloudv1.CloudMachineList{}
 			err := c.List("", obj)
 			require.Error(t, err)
-			require.True(t, errors.IsBadRequest(err))
+			require.True(t, apierrors.IsBadRequest(err))
 		})
 
 		t.Run("fails if Object is nil", func(t *testing.T) {
 			err := c.List("foo", nil)
 			require.Error(t, err)
-			require.True(t, errors.IsBadRequest(err))
+			require.True(t, apierrors.IsBadRequest(err))
 		})
 
 		t.Run("fails if unknown kind", func(t *testing.T) {
-			// TODO
+			// TODO implement test case
 		})
 
 		t.Run("fails if resourceGroup doesn't exist", func(t *testing.T) {
 			obj := &cloudv1.CloudMachineList{}
 			err := c.List("bar", obj)
 			require.Error(t, err)
-			require.True(t, errors.IsBadRequest(err))
+			require.True(t, apierrors.IsBadRequest(err))
 		})
 
 		t.Run("list", func(t *testing.T) {
@@ -291,24 +293,24 @@ func Test_cache_client(t *testing.T) {
 			obj := &cloudv1.CloudMachine{}
 			err := c.Update("", obj)
 			require.Error(t, err)
-			require.True(t, errors.IsBadRequest(err))
+			require.True(t, apierrors.IsBadRequest(err))
 		})
 
 		t.Run("fails if Object is nil", func(t *testing.T) {
 			err := c.Update("foo", nil)
 			require.Error(t, err)
-			require.True(t, errors.IsBadRequest(err))
+			require.True(t, apierrors.IsBadRequest(err))
 		})
 
 		t.Run("fails if unknown kind", func(t *testing.T) {
-			// TODO
+			// TODO implement test case
 		})
 
 		t.Run("fails if name is empty", func(t *testing.T) {
 			obj := &cloudv1.CloudMachine{}
 			err := c.Update("foo", obj)
 			require.Error(t, err)
-			require.True(t, errors.IsBadRequest(err))
+			require.True(t, apierrors.IsBadRequest(err))
 		})
 
 		t.Run("fails if resourceGroup doesn't exist", func(t *testing.T) {
@@ -319,7 +321,7 @@ func Test_cache_client(t *testing.T) {
 			}
 			err := c.Update("bar", obj)
 			require.Error(t, err)
-			require.True(t, errors.IsBadRequest(err))
+			require.True(t, apierrors.IsBadRequest(err))
 		})
 
 		t.Run("fails if Object doesn't exist", func(t *testing.T) {
@@ -330,7 +332,7 @@ func Test_cache_client(t *testing.T) {
 			}
 			err := c.Update("foo", obj)
 			require.Error(t, err)
-			require.True(t, errors.IsNotFound(err))
+			require.True(t, apierrors.IsNotFound(err))
 		})
 
 		t.Run("update - no changes", func(t *testing.T) {
@@ -380,7 +382,7 @@ func Test_cache_client(t *testing.T) {
 			objUpdate2 := objBefore.DeepCopy()
 			err = c.Update("foo", objUpdate2)
 			require.Error(t, err)
-			require.True(t, errors.IsConflict(err))
+			require.True(t, apierrors.IsConflict(err))
 
 			// TODO: check it have been informed only once
 		})
@@ -401,7 +403,7 @@ func Test_cache_client(t *testing.T) {
 				}
 				err := c.Update("foo", obj)
 				require.Error(t, err)
-				require.True(t, errors.IsBadRequest(err))
+				require.True(t, apierrors.IsBadRequest(err))
 			})
 			t.Run("fails if referenced object does not exists", func(t *testing.T) {
 				objBefore := createMachine(t, c, "foo", "child1")
@@ -416,7 +418,7 @@ func Test_cache_client(t *testing.T) {
 				}
 				err := c.Update("foo", objUpdate)
 				require.Error(t, err)
-				require.True(t, errors.IsBadRequest(err))
+				require.True(t, apierrors.IsBadRequest(err))
 			})
 			t.Run("updates takes care of ownedObjects", func(t *testing.T) {
 				createMachine(t, c, "foo", "parent1")
@@ -477,24 +479,24 @@ func Test_cache_client(t *testing.T) {
 			obj := &cloudv1.CloudMachine{}
 			err := c.Delete("", obj)
 			require.Error(t, err)
-			require.True(t, errors.IsBadRequest(err))
+			require.True(t, apierrors.IsBadRequest(err))
 		})
 
 		t.Run("fails if Object is nil", func(t *testing.T) {
 			err := c.Delete("foo", nil)
 			require.Error(t, err)
-			require.True(t, errors.IsBadRequest(err))
+			require.True(t, apierrors.IsBadRequest(err))
 		})
 
 		t.Run("fails if name is empty", func(t *testing.T) {
 			obj := &cloudv1.CloudMachine{}
 			err := c.Delete("foo", obj)
 			require.Error(t, err)
-			require.True(t, errors.IsBadRequest(err))
+			require.True(t, apierrors.IsBadRequest(err))
 		})
 
 		t.Run("fails if unknown kind", func(t *testing.T) {
-			// TODO
+			// TODO implement test case
 		})
 
 		t.Run("fails if Object group doesn't exist", func(t *testing.T) {
@@ -505,7 +507,7 @@ func Test_cache_client(t *testing.T) {
 			}
 			err := c.Delete("foo", obj)
 			require.Error(t, err)
-			require.True(t, errors.IsNotFound(err))
+			require.True(t, apierrors.IsNotFound(err))
 		})
 
 		t.Run("fails if gvk doesn't exist", func(t *testing.T) {
@@ -516,7 +518,7 @@ func Test_cache_client(t *testing.T) {
 			}
 			err := c.Delete("foo", obj)
 			require.Error(t, err)
-			require.True(t, errors.IsNotFound(err))
+			require.True(t, apierrors.IsNotFound(err))
 		})
 
 		t.Run("fails if Object doesn't exist", func(t *testing.T) {
@@ -529,7 +531,7 @@ func Test_cache_client(t *testing.T) {
 			}
 			err := c.Delete("foo", obj)
 			require.Error(t, err)
-			require.True(t, errors.IsNotFound(err))
+			require.True(t, apierrors.IsNotFound(err))
 		})
 
 		t.Run("delete", func(t *testing.T) {

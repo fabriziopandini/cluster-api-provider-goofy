@@ -4,7 +4,7 @@ import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 var (
 	// apiVersions is the value returned by /api discovery call.
-	// Note: This must contain all the API are required by CAPI
+	// Note: This must contain all the API are required by CAPI.
 	apiVersions = &metav1.APIVersions{
 		Versions: []string{"v1"},
 	}

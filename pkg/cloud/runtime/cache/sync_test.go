@@ -2,17 +2,17 @@ package cache
 
 import (
 	"context"
-	cloudv1 "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/api/v1alpha1"
+	"testing"
+	"time"
+
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"testing"
-	"time"
+
+	cloudv1 "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/api/v1alpha1"
 )
 
 func Test_cache_sync(t *testing.T) {
-	// ctrl.SetLogger(NewLoggerWithT(t))
-
 	ctx, cancel := context.WithCancel(context.TODO())
 	defer cancel()
 

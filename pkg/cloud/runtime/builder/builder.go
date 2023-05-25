@@ -3,16 +3,18 @@ package builder
 import (
 	"context"
 	"fmt"
+	"strings"
+
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
+
 	ccontroller "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/controller"
 	"github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/handler"
 	cmanager "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/manager"
 	cpredicate "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/predicate"
 	creconciler "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/reconcile"
 	csource "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/source"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
-	"strings"
 )
 
 type Builder struct {

@@ -20,6 +20,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 
 func (c *GoofyCluster) SetupWebhookWithManager(mgr ctrl.Manager) error {
@@ -42,16 +43,16 @@ func (c *GoofyCluster) Default() {
 var _ webhook.Validator = &GoofyCluster{}
 
 // ValidateCreate implements webhook.Validator so a webhook will be registered for the type.
-func (c *GoofyCluster) ValidateCreate() error {
-	return nil
+func (c *GoofyCluster) ValidateCreate() (admission.Warnings, error) {
+	return nil, nil
 }
 
 // ValidateUpdate implements webhook.Validator so a webhook will be registered for the type.
-func (c *GoofyCluster) ValidateUpdate(_ runtime.Object) error {
-	return nil
+func (c *GoofyCluster) ValidateUpdate(_ runtime.Object) (admission.Warnings, error) {
+	return nil, nil
 }
 
 // ValidateDelete implements webhook.Validator so a webhook will be registered for the type.
-func (c *GoofyCluster) ValidateDelete() error {
-	return nil
+func (c *GoofyCluster) ValidateDelete() (admission.Warnings, error) {
+	return nil, nil
 }

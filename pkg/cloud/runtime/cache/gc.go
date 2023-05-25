@@ -3,13 +3,14 @@ package cache
 import (
 	"context"
 	"fmt"
+	"sync"
+	"time"
+
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/util/workqueue"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sync"
-	"time"
 )
 
 type gcRequest struct {
@@ -27,7 +28,6 @@ func (c *cache) startGarbageCollector(ctx context.Context) error {
 	go func() {
 		<-ctx.Done()
 		c.garbageCollectorQueue.ShutDown()
-		// log.Info("Garbage collector queue stopped")
 	}()
 
 	workers := 0
@@ -37,19 +37,17 @@ func (c *cache) startGarbageCollector(ctx context.Context) error {
 		wg.Add(c.garbageCollectorConcurrency)
 		for i := 0; i < c.garbageCollectorConcurrency; i++ {
 			go func() {
-				workers += 1
+				workers++
 				defer wg.Done()
-				for c.processGarbageCollectorWorkItem(ctx) {
+				for c.processGarbageCollectorWorkItem(ctx) { //nolint:revive
 				}
 			}()
 		}
 		<-ctx.Done()
-		// log.Info("Shutdown signal received, waiting for all workers to finish")
 		wg.Wait()
-		// log.Info("All workers finished")
 	}()
 
-	if err := wait.PollImmediate(50*time.Millisecond, 5*time.Second, func() (done bool, err error) {
+	if err := wait.PollUntilContextTimeout(ctx, 50*time.Millisecond, 5*time.Second, false, func(ctx context.Context) (done bool, err error) {
 		if workers < c.garbageCollectorConcurrency {
 			return false, nil
 		}

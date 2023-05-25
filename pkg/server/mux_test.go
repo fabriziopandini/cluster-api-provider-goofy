@@ -8,8 +8,11 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"fmt"
-	cmanager "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/manager"
-	"github.com/fabriziopandini/cluster-api-provider-goofy/pkg/server/proxy"
+	"math/big"
+	"math/rand"
+	"testing"
+	"time"
+
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/require"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -18,12 +21,13 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"math/big"
-	"math/rand"
+	"k8s.io/klog/v2"
 	"sigs.k8s.io/cluster-api/util/certs"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"testing"
-	"time"
+
+	cmanager "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/manager"
+	"github.com/fabriziopandini/cluster-api-provider-goofy/pkg/server/proxy"
 )
 
 var (
@@ -35,6 +39,8 @@ func init() {
 	_ = metav1.AddMetaToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
 	_ = rbacv1.AddToScheme(scheme)
+
+	ctrl.SetLogger(klog.Background())
 }
 
 func TestAPI_corev1_CRUD(t *testing.T) {
@@ -45,15 +51,7 @@ func TestAPI_corev1_CRUD(t *testing.T) {
 
 	// InfraCluster controller >> when "creating the load balancer"
 	wcl1 := "workload-cluster1"
-
 	manager.AddResourceGroup(wcl1)
-	cc := manager.GetResourceGroup(wcl1).GetClient()
-
-	// TODO: move this down and create using the handler
-	nc := &corev1.Node{
-		ObjectMeta: metav1.ObjectMeta{Name: "foo"},
-	}
-	cc.Create(ctx, nc)
 
 	listener, err := wcmux.InitWorkloadClusterListener(wcl1)
 	require.NoError(t, err)
@@ -82,10 +80,10 @@ func TestAPI_corev1_CRUD(t *testing.T) {
 
 	// create
 
-	nc2 := &corev1.Node{
-		ObjectMeta: metav1.ObjectMeta{Name: "bar"},
+	nc := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "foo"},
 	}
-	err = c.Create(ctx, nc2)
+	err = c.Create(ctx, nc)
 	require.NoError(t, err)
 
 	// list
@@ -133,16 +131,7 @@ func TestAPI_rbacv1_CRUD(t *testing.T) {
 
 	// InfraCluster controller >> when "creating the load balancer"
 	wcl1 := "workload-cluster1"
-
 	manager.AddResourceGroup(wcl1)
-	cc := manager.GetResourceGroup(wcl1).GetClient()
-
-	// TODO: move this down and create using the handler
-	nc := &rbacv1.ClusterRole{
-		ObjectMeta: metav1.ObjectMeta{Name: "foo"},
-	}
-	err := cc.Create(ctx, nc)
-	require.NoError(t, err)
 
 	listener, err := wcmux.InitWorkloadClusterListener(wcl1)
 	require.NoError(t, err)
@@ -171,7 +160,11 @@ func TestAPI_rbacv1_CRUD(t *testing.T) {
 
 	// create
 
-	// TODO: create
+	nc := &rbacv1.ClusterRole{
+		ObjectMeta: metav1.ObjectMeta{Name: "foo"},
+	}
+	err = c.Create(ctx, nc)
+	require.NoError(t, err)
 
 	// list
 

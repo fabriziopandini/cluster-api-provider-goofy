@@ -2,17 +2,17 @@ package cache
 
 import (
 	"fmt"
-	jsonpatch "github.com/evanphx/json-patch/v5"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"time"
 
+	jsonpatch "github.com/evanphx/json-patch/v5"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -67,7 +67,7 @@ func (c *cache) List(resourceGroup string, list client.ObjectList, opts ...clien
 	}
 
 	if list == nil {
-		return apierrors.NewBadRequest("list must not be be nil")
+		return apierrors.NewBadRequest("list must not be nil")
 	}
 
 	gvk, err := c.gvkGetAndSet(list)
@@ -257,6 +257,9 @@ func (c *cache) Patch(resourceGroup string, obj client.Object, patch client.Patc
 	}
 
 	patchData, err := patch.Data(obj)
+	if err != nil {
+		return apierrors.NewInternalError(err)
+	}
 
 	encoder, err := c.getEncoder(obj, obj.GetObjectKind().GroupVersionKind().GroupVersion())
 	if err != nil {
@@ -294,8 +297,8 @@ func (c *cache) Patch(resourceGroup string, obj client.Object, patch client.Patc
 	return c.store(resourceGroup, obj, true)
 }
 
-func (h *cache) getEncoder(obj runtime.Object, gv runtime.GroupVersioner) (runtime.Encoder, error) {
-	codecs := serializer.NewCodecFactory(h.scheme)
+func (c *cache) getEncoder(obj runtime.Object, gv runtime.GroupVersioner) (runtime.Encoder, error) {
+	codecs := serializer.NewCodecFactory(c.scheme)
 
 	info, ok := runtime.SerializerInfoForMediaType(codecs.SupportedMediaTypes(), runtime.ContentTypeJSON)
 	if !ok {
@@ -365,7 +368,7 @@ func (c *cache) doTryDelete(resourceGroup string, tracker *resourceGroupTracker,
 	}
 
 	if ownedReferences, ok := tracker.ownedObjects[ownReference{gvk: gvk, key: key}]; ok {
-		for ref, _ := range ownedReferences {
+		for ref := range ownedReferences {
 			deleted, err := c.doTryDelete(resourceGroup, tracker, ref.gvk, ref.key)
 			if err != nil {
 				return false, err

@@ -2,10 +2,11 @@ package cache
 
 import (
 	"context"
+	"sync"
+
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
-	"sync"
 )
 
 type informer struct {

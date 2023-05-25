@@ -2,18 +2,18 @@ package cache
 
 import (
 	"context"
-	cloudv1 "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/api/v1alpha1"
-	"github.com/stretchr/testify/require"
-	"k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+
+	cloudv1 "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/api/v1alpha1"
 )
 
 func Test_cache_gc(t *testing.T) {
-	// ctrl.SetLogger(NewLoggerWithT(t))
-
 	ctx, cancel := context.WithCancel(context.TODO())
 	defer cancel()
 
@@ -41,7 +41,7 @@ func Test_cache_gc(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Never(t, func() bool {
-		if err := c.Get("foo", types.NamespacedName{Name: "baz"}, obj); errors.IsNotFound(err) {
+		if err := c.Get("foo", types.NamespacedName{Name: "baz"}, obj); apierrors.IsNotFound(err) {
 			return true
 		}
 		return false
@@ -52,7 +52,7 @@ func Test_cache_gc(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Eventually(t, func() bool {
-		if err := c.Get("foo", types.NamespacedName{Name: "baz"}, obj); errors.IsNotFound(err) {
+		if err := c.Get("foo", types.NamespacedName{Name: "baz"}, obj); apierrors.IsNotFound(err) {
 			return true
 		}
 		return false

@@ -3,8 +3,11 @@ package etcd
 import (
 	"context"
 	"fmt"
-	cclient "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/client"
-	cmanager "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/manager"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
 	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
 	pb "go.etcd.io/etcd/api/v3/etcdserverpb"
@@ -12,11 +15,10 @@ import (
 	"google.golang.org/grpc/metadata"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"net/http"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"strconv"
-	"strings"
-	"time"
+
+	cclient "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/client"
+	cmanager "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/manager"
 )
 
 // ResourceGroupResolver defines a func that can identify which workloadCluster/resourceGroup a
@@ -51,7 +53,7 @@ type maintenanceServer struct {
 	*baseServer
 }
 
-func (m *maintenanceServer) Alarm(ctx context.Context, request *pb.AlarmRequest) (*pb.AlarmResponse, error) {
+func (m *maintenanceServer) Alarm(ctx context.Context, _ *pb.AlarmRequest) (*pb.AlarmResponse, error) {
 	resourceGroup, etcdMember, err := m.getResourceGroupAndMember(ctx)
 	if err != nil {
 		return nil, err
@@ -62,7 +64,7 @@ func (m *maintenanceServer) Alarm(ctx context.Context, request *pb.AlarmRequest)
 	return &pb.AlarmResponse{}, nil
 }
 
-func (m *maintenanceServer) Status(ctx context.Context, request *pb.StatusRequest) (*pb.StatusResponse, error) {
+func (m *maintenanceServer) Status(ctx context.Context, _ *pb.StatusRequest) (*pb.StatusResponse, error) {
 	resourceGroup, etcdMember, err := m.getResourceGroupAndMember(ctx)
 	if err != nil {
 		return nil, err
@@ -78,27 +80,27 @@ func (m *maintenanceServer) Status(ctx context.Context, request *pb.StatusReques
 	return statusResponse, nil
 }
 
-func (m *maintenanceServer) Defragment(ctx context.Context, request *pb.DefragmentRequest) (*pb.DefragmentResponse, error) {
+func (m *maintenanceServer) Defragment(_ context.Context, _ *pb.DefragmentRequest) (*pb.DefragmentResponse, error) {
 	panic("implement me")
 }
 
-func (m *maintenanceServer) Hash(ctx context.Context, request *pb.HashRequest) (*pb.HashResponse, error) {
+func (m *maintenanceServer) Hash(_ context.Context, _ *pb.HashRequest) (*pb.HashResponse, error) {
 	panic("implement me")
 }
 
-func (m *maintenanceServer) HashKV(ctx context.Context, request *pb.HashKVRequest) (*pb.HashKVResponse, error) {
+func (m *maintenanceServer) HashKV(_ context.Context, _ *pb.HashKVRequest) (*pb.HashKVResponse, error) {
 	panic("implement me")
 }
 
-func (m *maintenanceServer) Snapshot(request *pb.SnapshotRequest, server pb.Maintenance_SnapshotServer) error {
+func (m *maintenanceServer) Snapshot(_ *pb.SnapshotRequest, _ pb.Maintenance_SnapshotServer) error {
 	panic("implement me")
 }
 
-func (m *maintenanceServer) MoveLeader(ctx context.Context, request *pb.MoveLeaderRequest) (*pb.MoveLeaderResponse, error) {
+func (m *maintenanceServer) MoveLeader(_ context.Context, _ *pb.MoveLeaderRequest) (*pb.MoveLeaderResponse, error) {
 	panic("implement me")
 }
 
-func (m *maintenanceServer) Downgrade(ctx context.Context, request *pb.DowngradeRequest) (*pb.DowngradeResponse, error) {
+func (m *maintenanceServer) Downgrade(_ context.Context, _ *pb.DowngradeRequest) (*pb.DowngradeResponse, error) {
 	panic("implement me")
 }
 
@@ -107,19 +109,19 @@ type clusterServerServer struct {
 	*baseServer
 }
 
-func (c *clusterServerServer) MemberAdd(ctx context.Context, request *pb.MemberAddRequest) (*pb.MemberAddResponse, error) {
+func (c *clusterServerServer) MemberAdd(_ context.Context, _ *pb.MemberAddRequest) (*pb.MemberAddResponse, error) {
 	panic("implement me")
 }
 
-func (c *clusterServerServer) MemberRemove(ctx context.Context, request *pb.MemberRemoveRequest) (*pb.MemberRemoveResponse, error) {
+func (c *clusterServerServer) MemberRemove(_ context.Context, _ *pb.MemberRemoveRequest) (*pb.MemberRemoveResponse, error) {
 	panic("implement me")
 }
 
-func (c *clusterServerServer) MemberUpdate(ctx context.Context, request *pb.MemberUpdateRequest) (*pb.MemberUpdateResponse, error) {
+func (c *clusterServerServer) MemberUpdate(_ context.Context, _ *pb.MemberUpdateRequest) (*pb.MemberUpdateResponse, error) {
 	panic("implement me")
 }
 
-func (c *clusterServerServer) MemberList(ctx context.Context, request *pb.MemberListRequest) (*pb.MemberListResponse, error) {
+func (c *clusterServerServer) MemberList(ctx context.Context, _ *pb.MemberListRequest) (*pb.MemberListResponse, error) {
 	resourceGroup, etcdMember, err := c.getResourceGroupAndMember(ctx)
 	if err != nil {
 		return nil, err
@@ -135,7 +137,7 @@ func (c *clusterServerServer) MemberList(ctx context.Context, request *pb.Member
 	return memberList, nil
 }
 
-func (c *clusterServerServer) MemberPromote(ctx context.Context, request *pb.MemberPromoteRequest) (*pb.MemberPromoteResponse, error) {
+func (c *clusterServerServer) MemberPromote(_ context.Context, _ *pb.MemberPromoteRequest) (*pb.MemberPromoteResponse, error) {
 	panic("implement me")
 }
 

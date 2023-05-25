@@ -2,24 +2,26 @@ package controller
 
 import (
 	"context"
-	cloudv1 "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/api/v1alpha1"
-	ccache "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/cache"
-	chandler "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/handler"
-	creconciler "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/reconcile"
-	csource "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/source"
+	"testing"
+	"time"
+
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"testing"
-	"time"
+
+	cloudv1 "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/api/v1alpha1"
+	ccache "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/cache"
+	chandler "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/handler"
+	creconciler "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/reconcile"
+	csource "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/source"
 )
 
 var scheme = runtime.NewScheme()
 
 func init() {
-	cloudv1.AddToScheme(scheme)
+	_ = cloudv1.AddToScheme(scheme)
 }
 
 type simpleReconciler struct {
@@ -42,13 +44,15 @@ func TestController_Queue(t *testing.T) {
 		Concurrency: 1,
 		Reconciler:  r,
 	})
+	require.NoError(t, err)
 
 	i := &fakeInformer{}
 
-	c.Watch(&csource.Kind{
+	err = c.Watch(&csource.Kind{
 		Type:     &cloudv1.CloudMachine{},
 		Informer: i,
 	}, &chandler.EnqueueRequestForObject{})
+	require.NoError(t, err)
 
 	err = c.Start(ctx)
 	require.NoError(t, err)

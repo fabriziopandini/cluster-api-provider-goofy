@@ -3,11 +3,13 @@ package manager
 import (
 	"context"
 	"fmt"
+
+	"k8s.io/apimachinery/pkg/runtime"
+	ctrl "sigs.k8s.io/controller-runtime"
+
 	ccache "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/cache"
 	ccontroller "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/controller"
 	cresourcegroup "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/resourcegroup"
-	"k8s.io/apimachinery/pkg/runtime"
-	ctrl "sigs.k8s.io/controller-runtime"
 )
 
 type Manager interface {

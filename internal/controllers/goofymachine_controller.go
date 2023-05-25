@@ -21,44 +21,42 @@ import (
 	"context"
 	"crypto/rsa"
 	"fmt"
-	"github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud"
-	cloudv1 "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/api/v1alpha1"
-	"github.com/fabriziopandini/cluster-api-provider-goofy/pkg/server"
+	"math/rand"
+	"time"
+
+	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
-	"math/rand"
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/annotations"
 	"sigs.k8s.io/cluster-api/util/certs"
 	"sigs.k8s.io/cluster-api/util/conditions"
 	clog "sigs.k8s.io/cluster-api/util/log"
 	"sigs.k8s.io/cluster-api/util/patch"
+	"sigs.k8s.io/cluster-api/util/predicates"
 	"sigs.k8s.io/cluster-api/util/secret"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
-	"time"
-
-	"github.com/pkg/errors"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
-	"sigs.k8s.io/controller-runtime/pkg/source"
-
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	"sigs.k8s.io/cluster-api/util"
-	"sigs.k8s.io/cluster-api/util/predicates"
 
 	infrav1 "github.com/fabriziopandini/cluster-api-provider-goofy/api/v1alpha1"
+	"github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud"
+	cloudv1 "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/api/v1alpha1"
+	"github.com/fabriziopandini/cluster-api-provider-goofy/pkg/server"
 )
 
 // GoofyMachineReconciler reconciles a GoofyMachine object.
 type GoofyMachineReconciler struct {
 	client.Client
 	CloudMgr     cloud.Manager
-	ApiServerMux *server.WorkloadClustersMux
+	APIServerMux *server.WorkloadClustersMux
 
 	// WatchFilterValue is the label value used to filter events prior to reconciliation.
 	WatchFilterValue string
@@ -242,7 +240,7 @@ func (r *GoofyMachineReconciler) reconcileNormal(ctx context.Context, cluster *c
 
 	// If there is not yet an etcd member listener for this machine.
 	etcdMember := fmt.Sprintf("etcd-%s", goofyMachine.Name)
-	if !r.ApiServerMux.HasEtcdMember(resourceGroup, etcdMember) {
+	if !r.APIServerMux.HasEtcdMember(resourceGroup, etcdMember) {
 		// Getting the etcd CA
 		s, err := secret.Get(ctx, r.Client, client.ObjectKeyFromObject(cluster), secret.EtcdCA)
 		if err != nil {
@@ -268,14 +266,14 @@ func (r *GoofyMachineReconciler) reconcileNormal(ctx context.Context, cluster *c
 			return ctrl.Result{}, errors.Wrapf(err, "invalid etcd CA: invalid %s", secret.TLSCrtDataName)
 		}
 
-		if err := r.ApiServerMux.AddEtcdMember(resourceGroup, etcdMember, cert, key.(*rsa.PrivateKey)); err != nil {
+		if err := r.APIServerMux.AddEtcdMember(resourceGroup, etcdMember, cert, key.(*rsa.PrivateKey)); err != nil {
 			return ctrl.Result{}, errors.Wrap(err, "failed to start etcd member")
 		}
 	}
 
 	// If there is not yet an API server listener for this machine.
 	apiServer := fmt.Sprintf("kube-apiserver-%s", goofyMachine.Name)
-	if !r.ApiServerMux.HasAPIServer(resourceGroup, apiServer) {
+	if !r.APIServerMux.HasAPIServer(resourceGroup, apiServer) {
 		// Getting the Kubernetes CA
 		s, err := secret.Get(ctx, r.Client, client.ObjectKeyFromObject(cluster), secret.ClusterCA)
 		if err != nil {
@@ -303,7 +301,7 @@ func (r *GoofyMachineReconciler) reconcileNormal(ctx context.Context, cluster *c
 
 		// Adding the APIServer.
 		// NOTE: When you add the first APIServer, the workload cluster listener is started.
-		if err := r.ApiServerMux.AddAPIServer(resourceGroup, apiServer, cert, key.(*rsa.PrivateKey)); err != nil {
+		if err := r.APIServerMux.AddAPIServer(resourceGroup, apiServer, cert, key.(*rsa.PrivateKey)); err != nil {
 			return ctrl.Result{}, errors.Wrap(err, "failed to start API server")
 		}
 	}
@@ -471,7 +469,7 @@ func (r *GoofyMachineReconciler) reconcileNormal(ctx context.Context, cluster *c
 	return ctrl.Result{}, nil
 }
 
-func (r *GoofyMachineReconciler) reconcileDelete(ctx context.Context, goofyMachine *infrav1.GoofyMachine) (ctrl.Result, error) {
+func (r *GoofyMachineReconciler) reconcileDelete(_ context.Context, goofyMachine *infrav1.GoofyMachine) (ctrl.Result, error) {
 	// TODO: implement
 	controllerutil.RemoveFinalizer(goofyMachine, infrav1.MachineFinalizer)
 
@@ -485,12 +483,20 @@ func (r *GoofyMachineReconciler) SetupWithManager(ctx context.Context, mgr ctrl.
 		WithOptions(options).
 		WithEventFilter(predicates.ResourceNotPausedAndHasFilterLabel(ctrl.LoggerFrom(ctx), r.WatchFilterValue)).
 		Watches(
-			&source.Kind{Type: &clusterv1.Machine{}},
+			&clusterv1.Machine{},
 			handler.EnqueueRequestsFromMapFunc(util.MachineToInfrastructureMapFunc(infrav1.GroupVersion.WithKind("GoofyMachine"))),
 			builder.WithPredicates(
 				predicates.ClusterUnpaused(ctrl.LoggerFrom(ctx)),
 			),
-		).Complete(r)
+		).
+		Watches(
+			&clusterv1.Cluster{},
+			handler.EnqueueRequestsFromMapFunc(util.ClusterToInfrastructureMapFunc(ctx, infrav1.GroupVersion.WithKind("GoofyMachine"), mgr.GetClient(), &infrav1.GoofyCluster{})),
+			builder.WithPredicates(
+				predicates.ClusterUnpaused(ctrl.LoggerFrom(ctx)),
+			),
+		).
+		Complete(r)
 	if err != nil {
 		return errors.Wrap(err, "failed setting up with a controller manager")
 	}

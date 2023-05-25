@@ -1,8 +1,9 @@
 package handler
 
 import (
-	cevent "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/event"
 	"k8s.io/client-go/util/workqueue"
+
+	cevent "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/event"
 )
 
 // EventHandler enqueues reconcile.Requests in response to events (e.g. object Create).  EventHandlers map an Event

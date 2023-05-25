@@ -2,12 +2,13 @@ package cache
 
 import (
 	"fmt"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"reflect"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	"strconv"
 	"strings"
 	"time"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 func (c *cache) beforeCreate(_ string, obj client.Object) error {
@@ -23,31 +24,31 @@ func (c *cache) afterCreate(resourceGroup string, obj client.Object) {
 	c.informCreate(resourceGroup, obj)
 }
 
-func (c *cache) beforeUpdate(_ string, old, new client.Object) error {
-	new.SetCreationTimestamp(old.GetCreationTimestamp())
-	new.SetResourceVersion(old.GetResourceVersion())
+func (c *cache) beforeUpdate(_ string, oldObj, newObj client.Object) error {
+	newObj.SetCreationTimestamp(oldObj.GetCreationTimestamp())
+	newObj.SetResourceVersion(oldObj.GetResourceVersion())
 	// TODO: UID
-	new.SetAnnotations(appendAnnotations(new, lastSyncTimeAnnotation, old.GetAnnotations()[lastSyncTimeAnnotation]))
-	if !old.GetDeletionTimestamp().IsZero() {
-		new.SetDeletionTimestamp(old.GetDeletionTimestamp())
+	newObj.SetAnnotations(appendAnnotations(newObj, lastSyncTimeAnnotation, oldObj.GetAnnotations()[lastSyncTimeAnnotation]))
+	if !oldObj.GetDeletionTimestamp().IsZero() {
+		newObj.SetDeletionTimestamp(oldObj.GetDeletionTimestamp())
 	}
-	if !reflect.DeepEqual(new, old) {
+	if !reflect.DeepEqual(newObj, oldObj) {
 		now := time.Now().UTC()
-		new.SetAnnotations(appendAnnotations(new, lastSyncTimeAnnotation, now.Format(time.RFC3339)))
+		newObj.SetAnnotations(appendAnnotations(newObj, lastSyncTimeAnnotation, now.Format(time.RFC3339)))
 
-		oldResourceVersion, _ := strconv.Atoi(strings.TrimPrefix(old.GetResourceVersion(), "v"))
-		new.SetResourceVersion(fmt.Sprintf("v%d", oldResourceVersion+1))
+		oldResourceVersion, _ := strconv.Atoi(strings.TrimPrefix(oldObj.GetResourceVersion(), "v"))
+		newObj.SetResourceVersion(fmt.Sprintf("v%d", oldResourceVersion+1))
 	}
 	return nil
 }
 
-func (c *cache) afterUpdate(resourceGroup string, old, new client.Object) {
-	if old.GetDeletionTimestamp().IsZero() && !new.GetDeletionTimestamp().IsZero() {
-		c.informDelete(resourceGroup, new)
+func (c *cache) afterUpdate(resourceGroup string, oldObj, newObj client.Object) {
+	if oldObj.GetDeletionTimestamp().IsZero() && !newObj.GetDeletionTimestamp().IsZero() {
+		c.informDelete(resourceGroup, newObj)
 		return
 	}
-	if !reflect.DeepEqual(new, old) {
-		c.informUpdate(resourceGroup, old, new)
+	if !reflect.DeepEqual(newObj, oldObj) {
+		c.informUpdate(resourceGroup, oldObj, newObj)
 	}
 }
 
@@ -63,7 +64,7 @@ func appendAnnotations(obj client.Object, kayValuePair ...string) map[string]str
 	for k, v := range obj.GetAnnotations() {
 		newAnnotations[k] = v
 	}
-	for i := 0; i < len(kayValuePair)-1; i = i + 2 {
+	for i := 0; i < len(kayValuePair)-1; i += 2 {
 		k := kayValuePair[i]
 		v := kayValuePair[i+1]
 		newAnnotations[k] = v

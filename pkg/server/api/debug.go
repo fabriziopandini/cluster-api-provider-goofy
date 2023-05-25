@@ -1,13 +1,17 @@
 package api
 
 import (
+	"net/http"
+
 	"github.com/emicklei/go-restful/v3"
-	cmanager "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/manager"
 	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/runtime"
-	"net/http"
+
+	cmanager "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/manager"
 )
 
+// DebugInfoProvider defines the list of method the server must implement
+// to provide debug info.
 type DebugInfoProvider interface {
 	ListProviders() map[string]string
 }
@@ -43,7 +47,7 @@ func (h *debugHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.container.ServeHTTP(w, r)
 }
 
-func (h *debugHandler) listenersList(req *restful.Request, resp *restful.Response) {
+func (h *debugHandler) listenersList(_ *restful.Request, resp *restful.Response) {
 	providers := h.infoProvider.ListProviders()
 
 	if err := resp.WriteEntity(providers); err != nil {

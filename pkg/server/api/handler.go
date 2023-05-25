@@ -3,12 +3,14 @@ package api
 import (
 	"context"
 	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"time"
+
 	"github.com/emicklei/go-restful/v3"
-	cmanager "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/manager"
-	gportforward "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/server/api/portforward"
 	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
-	"io"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -19,10 +21,10 @@ import (
 	"k8s.io/apimachinery/pkg/util/httpstream"
 	"k8s.io/apimachinery/pkg/util/httpstream/spdy"
 	"k8s.io/client-go/tools/portforward"
-	"net"
-	"net/http"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"time"
+
+	cmanager "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/manager"
+	gportforward "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/server/api/portforward"
 )
 
 // ResourceGroupResolver defines a func that can identify which workloadCluster/resourceGroup a
@@ -61,12 +63,12 @@ func NewAPIServerHandler(manager cmanager.Manager, log logr.Logger, resolver Res
 	ws.Route(ws.PATCH("/api/v1/{resource}/{name}").Consumes(string(types.MergePatchType), string(types.StrategicMergePatchType)).To(apiServer.apiV1Patch))
 	ws.Route(ws.DELETE("/api/v1/{resource}/{name}").Consumes(runtime.ContentTypeProtobuf).To(apiServer.apiV1Delete))
 
-	ws.Route(ws.POST("/apis/{group}/{version}/{resource}").To(apiServer.apiV1Create))
+	ws.Route(ws.POST("/apis/{group}/{version}/{resource}").Consumes(runtime.ContentTypeProtobuf).To(apiServer.apiV1Create))
 	ws.Route(ws.GET("/apis/{group}/{version}/{resource}").To(apiServer.apiV1List))
 	ws.Route(ws.GET("/apis/{group}/{version}/{resource}/{name}").To(apiServer.apiV1Get))
-	ws.Route(ws.PUT("/apis/{group}/{version}/{resource}/{name}").To(apiServer.apiV1Update))
+	ws.Route(ws.PUT("/apis/{group}/{version}/{resource}/{name}").Consumes(runtime.ContentTypeProtobuf).To(apiServer.apiV1Update))
 	ws.Route(ws.PATCH("/apis/{group}/{version}/{resource}/{name}").Consumes(string(types.MergePatchType), string(types.StrategicMergePatchType)).To(apiServer.apiV1Patch))
-	ws.Route(ws.DELETE("/apis/{group}/{version}/{resource}/{name}").To(apiServer.apiV1Delete))
+	ws.Route(ws.DELETE("/apis/{group}/{version}/{resource}/{name}").Consumes(runtime.ContentTypeProtobuf).To(apiServer.apiV1Delete))
 
 	// CRUD endpoints (namespaced objects)
 	ws.Route(ws.POST("/api/v1/namespaces/{namespace}/{resource}").Consumes(runtime.ContentTypeProtobuf).To(apiServer.apiV1Create))
@@ -76,12 +78,12 @@ func NewAPIServerHandler(manager cmanager.Manager, log logr.Logger, resolver Res
 	ws.Route(ws.PATCH("/api/v1/namespaces/{namespace}/{resource}/{name}").Consumes(string(types.MergePatchType), string(types.StrategicMergePatchType)).To(apiServer.apiV1Patch))
 	ws.Route(ws.DELETE("/api/v1/namespaces/{namespace}/{resource}/{name}").Consumes(runtime.ContentTypeProtobuf).To(apiServer.apiV1Delete))
 
-	ws.Route(ws.POST("/apis/{group}/{version}/{resource}").To(apiServer.apiV1Create))
+	ws.Route(ws.POST("/apis/{group}/{version}/{resource}").Consumes(runtime.ContentTypeProtobuf).To(apiServer.apiV1Create))
 	ws.Route(ws.GET("/apis/{group}/{version}/namespaces/{namespace}/{resource}").To(apiServer.apiV1List))
 	ws.Route(ws.GET("/apis/{group}/{version}/namespaces/{namespace}/{resource}/{name}").To(apiServer.apiV1Get))
-	ws.Route(ws.PUT("/apis/{group}/{version}/namespaces/{namespace}/{resource}/{name}").To(apiServer.apiV1Update))
+	ws.Route(ws.PUT("/apis/{group}/{version}/namespaces/{namespace}/{resource}/{name}").Consumes(runtime.ContentTypeProtobuf).To(apiServer.apiV1Update))
 	ws.Route(ws.PATCH("/apis/{group}/{version}/namespaces/{namespace}/{resource}/{name}").Consumes(string(types.MergePatchType), string(types.StrategicMergePatchType)).To(apiServer.apiV1Patch))
-	ws.Route(ws.DELETE("/apis/{group}/{version}/namespaces/{namespace}/{resource}/{name}").To(apiServer.apiV1Delete))
+	ws.Route(ws.DELETE("/apis/{group}/{version}/namespaces/{namespace}/{resource}/{name}").Consumes(runtime.ContentTypeProtobuf).To(apiServer.apiV1Delete))
 
 	// Port forward endpoints
 	ws.Route(ws.GET("/api/v1/namespaces/{namespace}/pods/{name}/portforward").To(apiServer.apiV1PortForward))
@@ -104,26 +106,18 @@ func (h *apiServerHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *apiServerHandler) globalLogging(req *restful.Request, resp *restful.Response, chain *restful.FilterChain) {
-	fmt.Println("Serving", "method", req.Request.Method, "url", req.Request.URL, "contentType", req.HeaderParameter("Content-Type"))
 	h.log.Info("Serving", "method", req.Request.Method, "url", req.Request.URL, "contentType", req.HeaderParameter("Content-Type"))
 	chain.ProcessFilter(req, resp)
 }
 
-func (h *apiServerHandler) routeLogging(req *restful.Request, resp *restful.Response, chain *restful.FilterChain) {
-	fmt.Printf("Route %s %s %s\n", req.Request.Method, req.Request.URL, req.HeaderParameter("Content-Type"))
-
-	h.log.Info("Route selected", "method", req.Request.Method, "url", req.Request.URL, "contentType", req.HeaderParameter("Content-Type"), "selectedRoutePath", req.SelectedRoutePath())
-	chain.ProcessFilter(req, resp)
-}
-
-func (h *apiServerHandler) apiDiscovery(req *restful.Request, resp *restful.Response) {
+func (h *apiServerHandler) apiDiscovery(_ *restful.Request, resp *restful.Response) {
 	if err := resp.WriteEntity(apiVersions); err != nil {
 		_ = resp.WriteErrorString(http.StatusInternalServerError, err.Error())
 		return
 	}
 }
 
-func (h *apiServerHandler) apiV1Discovery(req *restful.Request, resp *restful.Response) {
+func (h *apiServerHandler) apiV1Discovery(_ *restful.Request, resp *restful.Response) {
 	if err := resp.WriteEntity(corev1APIResourceList); err != nil {
 		_ = resp.WriteErrorString(http.StatusInternalServerError, err.Error())
 		return
@@ -170,7 +164,7 @@ func (h *apiServerHandler) apiV1Create(req *restful.Request, resp *restful.Respo
 	}
 
 	// Gets the obj from the request.
-	defer req.Request.Body.Close()
+	defer func() { _ = req.Request.Body.Close() }()
 	objData, _ := io.ReadAll(req.Request.Body)
 
 	newObj, err := h.manager.GetScheme().New(*gvk)
@@ -229,7 +223,7 @@ func (h *apiServerHandler) apiV1List(req *restful.Request, resp *restful.Respons
 		listOpts = append(listOpts, client.InNamespace(req.PathParameter("namespace")))
 	}
 
-	if err := cloudClient.List(ctx, list); err != nil {
+	if err := cloudClient.List(ctx, list, listOpts...); err != nil {
 		_ = resp.WriteErrorString(http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -301,7 +295,7 @@ func (h *apiServerHandler) apiV1Update(req *restful.Request, resp *restful.Respo
 	}
 
 	// Gets the obj from the request.
-	defer req.Request.Body.Close()
+	defer func() { _ = req.Request.Body.Close() }()
 	objData, _ := io.ReadAll(req.Request.Body)
 
 	newObj, err := h.manager.GetScheme().New(*gvk)
@@ -351,7 +345,7 @@ func (h *apiServerHandler) apiV1Patch(req *restful.Request, resp *restful.Respon
 	}
 
 	// Gets the patch from the request
-	defer req.Request.Body.Close()
+	defer func() { _ = req.Request.Body.Close() }()
 	patchData, _ := io.ReadAll(req.Request.Body)
 	patchType := types.PatchType(req.HeaderParameter("Content-Type"))
 	patch := client.RawPatch(patchType, patchData)
@@ -436,7 +430,7 @@ func (h *apiServerHandler) apiV1PortForward(req *restful.Request, resp *restful.
 	// Upgrade the connection specifying what to do when a new http stream is received.
 	// After being received, the new stream will be published into the stream channel for handling.
 	upgrader := spdy.NewResponseUpgrader()
-	conn := upgrader.UpgradeResponse(respWriter, request, gportforward.HttpStreamReceived(streamChan))
+	conn := upgrader.UpgradeResponse(respWriter, request, gportforward.HTTPStreamReceived(streamChan))
 	if conn == nil {
 		_ = resp.WriteErrorString(http.StatusInternalServerError, "failed to get upgraded connection")
 		return
@@ -449,7 +443,7 @@ func (h *apiServerHandler) apiV1PortForward(req *restful.Request, resp *restful.
 	// Start the process handling streams that are published in the stream channel, please note that:
 	// - The connection with the target will be established only when the first operation will be executed
 	// - Following operations will re-use the same connection.
-	streamHandler := gportforward.NewHttpStreamHandler(
+	streamHandler := gportforward.NewHTTPStreamHandler(
 		conn,
 		streamChan,
 		podName,
@@ -478,10 +472,10 @@ func (h *apiServerHandler) doPortForward(ctx context.Context, address string, st
 
 	// Create a tunnel for bi-directional copy of data between the stream
 	// originated from the initiator of the port forward operation and the target.
-	return gportforward.HttpStreamTunnel(ctx, stream, dial)
+	return gportforward.HTTPStreamTunnel(ctx, stream, dial)
 }
 
-func (h *apiServerHandler) healthz(req *restful.Request, resp *restful.Response) {
+func (h *apiServerHandler) healthz(_ *restful.Request, resp *restful.Response) {
 	resp.WriteHeader(http.StatusOK)
 }
 

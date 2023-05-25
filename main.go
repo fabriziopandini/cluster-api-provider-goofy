@@ -21,17 +21,13 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud"
-	cloudv1 "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/api/v1alpha1"
-	"github.com/fabriziopandini/cluster-api-provider-goofy/pkg/server"
-	rbacv1 "k8s.io/api/rbac/v1"
-	"net/http"
 	_ "net/http/pprof"
 	"os"
 	"time"
 
 	"github.com/spf13/pflag"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
@@ -46,13 +42,17 @@ import (
 	"sigs.k8s.io/cluster-api/util/flags"
 	"sigs.k8s.io/cluster-api/version"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
-
-	// +kubebuilder:scaffold:imports
-	"github.com/fabriziopandini/cluster-api-provider-goofy/controllers"
+	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	infrav1 "github.com/fabriziopandini/cluster-api-provider-goofy/api/v1alpha1"
+	// +kubebuilder:scaffold:imports
+	"github.com/fabriziopandini/cluster-api-provider-goofy/controllers"
+	"github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud"
+	cloudv1 "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/api/v1alpha1"
+	"github.com/fabriziopandini/cluster-api-provider-goofy/pkg/server"
 )
 
 var (
@@ -164,16 +164,6 @@ func main() {
 	// klog.Background will automatically use the right logger.
 	ctrl.SetLogger(klog.Background())
 
-	if profilerAddress != "" {
-		setupLog.Info(fmt.Sprintf("Profiler listening for requests at %s", profilerAddress))
-		go func() {
-			srv := http.Server{Addr: profilerAddress, ReadHeaderTimeout: 2 * time.Second}
-			if err := srv.ListenAndServe(); err != nil {
-				setupLog.Error(err, "problem running profiler server")
-			}
-		}()
-	}
-
 	restConfig := ctrl.GetConfigOrDie()
 	restConfig.QPS = restConfigQPS
 	restConfig.Burst = restConfigBurst
@@ -183,6 +173,11 @@ func main() {
 	if err != nil {
 		setupLog.Error(err, "unable to add TLS settings to the webhook server")
 		os.Exit(1)
+	}
+
+	var watchNamespaces []string
+	if watchNamespace != "" {
+		watchNamespaces = []string{watchNamespace}
 	}
 
 	ctrlOptions := ctrl.Options{
@@ -195,15 +190,27 @@ func main() {
 		RetryPeriod:                &leaderElectionRetryPeriod,
 		LeaderElectionResourceLock: resourcelock.LeasesResourceLock,
 		Namespace:                  watchNamespace,
-		SyncPeriod:                 &syncPeriod,
-		ClientDisableCacheFor: []client.Object{
-			&corev1.ConfigMap{},
-			&corev1.Secret{},
+		HealthProbeBindAddress:     healthAddr,
+		PprofBindAddress:           profilerAddress,
+		Cache: cache.Options{
+			Namespaces: watchNamespaces,
+			SyncPeriod: &syncPeriod,
 		},
-		Port:                   webhookPort,
-		CertDir:                webhookCertDir,
-		HealthProbeBindAddress: healthAddr,
-		TLSOpts:                tlsOptionOverrides,
+		Client: client.Options{
+			Cache: &client.CacheOptions{
+				DisableFor: []client.Object{
+					&corev1.ConfigMap{},
+					&corev1.Secret{},
+				},
+			},
+		},
+		WebhookServer: webhook.NewServer(
+			webhook.Options{
+				Port:    webhookPort,
+				CertDir: webhookCertDir,
+				TLSOpts: tlsOptionOverrides,
+			},
+		),
 	}
 
 	mgr, err := ctrl.NewManager(restConfig, ctrlOptions)
@@ -240,7 +247,7 @@ func setupChecks(mgr ctrl.Manager) {
 	}
 }
 
-func setupIndexes(ctx context.Context, mgr ctrl.Manager) {
+func setupIndexes(_ context.Context, _ ctrl.Manager) {
 }
 
 func setupReconcilers(ctx context.Context, mgr ctrl.Manager) {
@@ -259,7 +266,7 @@ func setupReconcilers(ctx context.Context, mgr ctrl.Manager) {
 	if err := (&controllers.GoofyClusterReconciler{
 		Client:           mgr.GetClient(),
 		CloudMgr:         cloudMgr,
-		ApiServerMux:     apiServerMux,
+		APIServerMux:     apiServerMux,
 		WatchFilterValue: watchFilterValue,
 	}).SetupWithManager(ctx, mgr, concurrency(clusterConcurrency)); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "GoofyCluster")
@@ -269,7 +276,7 @@ func setupReconcilers(ctx context.Context, mgr ctrl.Manager) {
 	if err := (&controllers.GoofyMachineReconciler{
 		Client:           mgr.GetClient(),
 		CloudMgr:         cloudMgr,
-		ApiServerMux:     apiServerMux,
+		APIServerMux:     apiServerMux,
 		WatchFilterValue: watchFilterValue,
 	}).SetupWithManager(ctx, mgr, concurrency(machineConcurrency)); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "GoofyMachine")
