@@ -69,6 +69,23 @@ var (
 				},
 				StorageVersionHash: "",
 			},
+			{
+				Name:         "secrets",
+				SingularName: "",
+				Namespaced:   true,
+				Kind:         "Secret",
+				Verbs: []string{
+					"create",
+					"delete",
+					"deletecollection",
+					"get",
+					"list",
+					"patch",
+					"update",
+					"watch",
+				},
+				StorageVersionHash: "",
+			},
 		},
 	}
 

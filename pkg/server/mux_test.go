@@ -82,7 +82,11 @@ func TestAPI_corev1_CRUD(t *testing.T) {
 
 	// create
 
-	// TODO: create
+	nc2 := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "bar"},
+	}
+	err = c.Create(ctx, nc2)
+	require.NoError(t, err)
 
 	// list
 

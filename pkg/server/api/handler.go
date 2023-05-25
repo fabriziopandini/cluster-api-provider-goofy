@@ -14,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/httpstream"
 	"k8s.io/apimachinery/pkg/util/httpstream/spdy"
@@ -21,7 +22,6 @@ import (
 	"net"
 	"net/http"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/yaml"
 	"time"
 )
 
@@ -54,30 +54,34 @@ func NewAPIServerHandler(manager cmanager.Manager, log logr.Logger, resolver Res
 	ws.Route(ws.GET("/apis/{group}/{version}").To(apiServer.apisDiscovery))
 
 	// CRUD endpoints (global objects)
-	// ws.Route(ws.POST("/api/v1/{resource}").Reads().Consumes(runtime.ContentTypeProtobuf).Filter(apiServer.routeLogging).To(apiServer.apiV1Create))
+	ws.Route(ws.POST("/api/v1/{resource}").Consumes(runtime.ContentTypeProtobuf).To(apiServer.apiV1Create))
 	ws.Route(ws.GET("/api/v1/{resource}").To(apiServer.apiV1List))
 	ws.Route(ws.GET("/api/v1/{resource}/{name}").To(apiServer.apiV1Get))
+	ws.Route(ws.PUT("/api/v1/{resource}/{name}").Consumes(runtime.ContentTypeProtobuf).To(apiServer.apiV1Update))
 	ws.Route(ws.PATCH("/api/v1/{resource}/{name}").Consumes(string(types.MergePatchType), string(types.StrategicMergePatchType)).To(apiServer.apiV1Patch))
 	ws.Route(ws.DELETE("/api/v1/{resource}/{name}").Consumes(runtime.ContentTypeProtobuf).To(apiServer.apiV1Delete))
 
-	// ws.Route(ws.POST("/apis/{group}/{version}/{resource}").Reads().Consumes(runtime.ContentTypeProtobuf).Filter(apiServer.routeLogging).To(apiServer.apiV1Create))
+	ws.Route(ws.POST("/apis/{group}/{version}/{resource}").To(apiServer.apiV1Create))
 	ws.Route(ws.GET("/apis/{group}/{version}/{resource}").To(apiServer.apiV1List))
 	ws.Route(ws.GET("/apis/{group}/{version}/{resource}/{name}").To(apiServer.apiV1Get))
+	ws.Route(ws.PUT("/apis/{group}/{version}/{resource}/{name}").To(apiServer.apiV1Update))
 	ws.Route(ws.PATCH("/apis/{group}/{version}/{resource}/{name}").Consumes(string(types.MergePatchType), string(types.StrategicMergePatchType)).To(apiServer.apiV1Patch))
-	ws.Route(ws.DELETE("/apis/{group}/{version}/{resource}/{name}").Consumes(runtime.ContentTypeProtobuf).To(apiServer.apiV1Delete))
+	ws.Route(ws.DELETE("/apis/{group}/{version}/{resource}/{name}").To(apiServer.apiV1Delete))
 
-	// TODO: CRUD endpoints (namespaced objects)
-	// ws.Route(ws.POST("/api/v1/namespaces/{namespace}/{resource}").Reads().Consumes(runtime.ContentTypeProtobuf).Filter(apiServer.routeLogging).To(apiServer.apiV1Create))
+	// CRUD endpoints (namespaced objects)
+	ws.Route(ws.POST("/api/v1/namespaces/{namespace}/{resource}").Consumes(runtime.ContentTypeProtobuf).To(apiServer.apiV1Create))
 	ws.Route(ws.GET("/api/v1/namespaces/{namespace}/{resource}").To(apiServer.apiV1List))
 	ws.Route(ws.GET("/api/v1/namespaces/{namespace}/{resource}/{name}").To(apiServer.apiV1Get))
+	ws.Route(ws.PUT("/api/v1/namespaces/{namespace}/{resource}/{name}").Consumes(runtime.ContentTypeProtobuf).To(apiServer.apiV1Update))
 	ws.Route(ws.PATCH("/api/v1/namespaces/{namespace}/{resource}/{name}").Consumes(string(types.MergePatchType), string(types.StrategicMergePatchType)).To(apiServer.apiV1Patch))
 	ws.Route(ws.DELETE("/api/v1/namespaces/{namespace}/{resource}/{name}").Consumes(runtime.ContentTypeProtobuf).To(apiServer.apiV1Delete))
 
-	// ws.Route(ws.POST("/apis/{group}/{version}/{resource}").Reads().Consumes(runtime.ContentTypeProtobuf).Filter(apiServer.routeLogging).To(apiServer.apiV1Create))
+	ws.Route(ws.POST("/apis/{group}/{version}/{resource}").To(apiServer.apiV1Create))
 	ws.Route(ws.GET("/apis/{group}/{version}/namespaces/{namespace}/{resource}").To(apiServer.apiV1List))
 	ws.Route(ws.GET("/apis/{group}/{version}/namespaces/{namespace}/{resource}/{name}").To(apiServer.apiV1Get))
+	ws.Route(ws.PUT("/apis/{group}/{version}/namespaces/{namespace}/{resource}/{name}").To(apiServer.apiV1Update))
 	ws.Route(ws.PATCH("/apis/{group}/{version}/namespaces/{namespace}/{resource}/{name}").Consumes(string(types.MergePatchType), string(types.StrategicMergePatchType)).To(apiServer.apiV1Patch))
-	ws.Route(ws.DELETE("/apis/{group}/{version}/namespaces/{namespace}/{resource}/{name}").Consumes(runtime.ContentTypeProtobuf).To(apiServer.apiV1Delete))
+	ws.Route(ws.DELETE("/apis/{group}/{version}/namespaces/{namespace}/{resource}/{name}").To(apiServer.apiV1Delete))
 
 	// Port forward endpoints
 	ws.Route(ws.GET("/api/v1/namespaces/{namespace}/pods/{name}/portforward").To(apiServer.apiV1PortForward))
@@ -146,9 +150,6 @@ func (h *apiServerHandler) apisDiscovery(req *restful.Request, resp *restful.Res
 }
 
 func (h *apiServerHandler) apiV1Create(req *restful.Request, resp *restful.Response) {
-	// TODO: protobuf is used for core types:
-	//  - figure out how to make restful to work with protibuf (it accepts it, but it tries to convert the object from yaml/json)
-	//  - find out where protobuf definition for core types are defined, and how to unmarshal
 	ctx := req.Request.Context()
 
 	// Gets the resource group the request targets to (the resolver is aware of the mapping host<->resourceGroup)
@@ -161,16 +162,6 @@ func (h *apiServerHandler) apiV1Create(req *restful.Request, resp *restful.Respo
 	// Gets at client to the resource group.
 	cloudClient := h.manager.GetResourceGroup(resourceGroup).GetClient()
 
-	// Gets the object from the request.
-	defer req.Request.Body.Close()
-	objData, _ := io.ReadAll(req.Request.Body)
-
-	var m map[string]interface{}
-	if err := yaml.Unmarshal(objData, &m); err != nil {
-		_ = resp.WriteErrorString(http.StatusInternalServerError, err.Error())
-		return
-	}
-
 	// Maps the requested resource to a gvk.
 	gvk, err := requestToGVK(req)
 	if err != nil {
@@ -178,17 +169,34 @@ func (h *apiServerHandler) apiV1Create(req *restful.Request, resp *restful.Respo
 		return
 	}
 
+	// Gets the obj from the request.
+	defer req.Request.Body.Close()
+	objData, _ := io.ReadAll(req.Request.Body)
+
+	newObj, err := h.manager.GetScheme().New(*gvk)
+	if err != nil {
+		_ = resp.WriteErrorString(http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	codecFactory := serializer.NewCodecFactory(h.manager.GetScheme())
+	if err := runtime.DecodeInto(codecFactory.UniversalDecoder(), objData, newObj); err != nil {
+		_ = resp.WriteErrorString(http.StatusInternalServerError, err.Error())
+		return
+	}
+
 	// Create the object
-	obj := &unstructured.Unstructured{}
-	obj.SetAPIVersion(gvk.GroupVersion().String())
-	obj.SetKind(gvk.Kind)
-	obj.SetUnstructuredContent(m)
+	obj := newObj.(client.Object)
+	// TODO: consider check vs enforce for namespace on the object - namespace on the request path
+	obj.SetNamespace(req.PathParameter("namespace"))
 	if err := cloudClient.Create(ctx, obj); err != nil {
 		_ = resp.WriteErrorString(http.StatusInternalServerError, err.Error())
 		return
 	}
-	// TODO: check if patch have to return something in body
-	// TODO: think about making create, update, patch and delete to change the object in input
+	if err := resp.WriteEntity(obj); err != nil {
+		_ = resp.WriteErrorString(http.StatusInternalServerError, err.Error())
+		return
+	}
 }
 
 func (h *apiServerHandler) apiV1List(req *restful.Request, resp *restful.Response) {
@@ -272,6 +280,56 @@ func (h *apiServerHandler) apiV1Get(req *restful.Request, resp *restful.Response
 	}
 }
 
+func (h *apiServerHandler) apiV1Update(req *restful.Request, resp *restful.Response) {
+	ctx := req.Request.Context()
+
+	// Gets the resource group the request targets to (the resolver is aware of the mapping host<->resourceGroup)
+	resourceGroup, err := h.resourceGroupResolver(req.Request.Host)
+	if err != nil {
+		_ = resp.WriteErrorString(http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	// Gets at client to the resource group.
+	cloudClient := h.manager.GetResourceGroup(resourceGroup).GetClient()
+
+	// Maps the requested resource to a gvk.
+	gvk, err := requestToGVK(req)
+	if err != nil {
+		_ = resp.WriteErrorString(http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	// Gets the obj from the request.
+	defer req.Request.Body.Close()
+	objData, _ := io.ReadAll(req.Request.Body)
+
+	newObj, err := h.manager.GetScheme().New(*gvk)
+	if err != nil {
+		_ = resp.WriteErrorString(http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	codecFactory := serializer.NewCodecFactory(h.manager.GetScheme())
+	if err := runtime.DecodeInto(codecFactory.UniversalDecoder(), objData, newObj); err != nil {
+		_ = resp.WriteErrorString(http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	// Create the object
+	obj := newObj.(client.Object)
+	// TODO: consider check vs enforce for namespace on the object - namespace on the request path
+	obj.SetNamespace(req.PathParameter("namespace"))
+	if err := cloudClient.Update(ctx, obj); err != nil {
+		_ = resp.WriteErrorString(http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := resp.WriteEntity(obj); err != nil {
+		_ = resp.WriteErrorString(http.StatusInternalServerError, err.Error())
+		return
+	}
+}
+
 func (h *apiServerHandler) apiV1Patch(req *restful.Request, resp *restful.Response) {
 	ctx := req.Request.Context()
 
@@ -300,6 +358,7 @@ func (h *apiServerHandler) apiV1Patch(req *restful.Request, resp *restful.Respon
 
 	// Applies the Patch.
 	obj := &unstructured.Unstructured{}
+	// TODO: consider check vs enforce for gvk on the object - gvk on the request path (same for name/namespace)
 	obj.SetAPIVersion(gvk.GroupVersion().String())
 	obj.SetKind(gvk.Kind)
 	obj.SetName(req.PathParameter("name"))

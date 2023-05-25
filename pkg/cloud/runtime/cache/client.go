@@ -174,6 +174,8 @@ func (c *cache) store(resourceGroup string, obj client.Object, replaceExisting b
 		tracker.objects[gvk] = make(map[types.NamespacedName]client.Object)
 	}
 
+	// TODO: if unstructured, convert to typed object
+
 	key := client.ObjectKeyFromObject(obj)
 	objRef := ownReference{gvk: gvk, key: key}
 	if trackedObj, ok := tracker.objects[gvk][key]; ok {
