@@ -6,30 +6,32 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
-	infrav1 "github.com/fabriziopandini/cluster-api-provider-goofy/api/v1alpha1"
-	cmanager "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/manager"
-	"github.com/fabriziopandini/cluster-api-provider-goofy/pkg/server/api"
-	"github.com/fabriziopandini/cluster-api-provider-goofy/pkg/server/etcd"
+	"net"
+	"net/http"
+	"strings"
+	"sync"
+	"time"
+
 	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
-	"net"
-	"net/http"
 	"sigs.k8s.io/cluster-api/util/certs"
 	"sigs.k8s.io/controller-runtime/pkg/log"
-	"strings"
-	"sync"
-	"time"
+
+	infrav1 "github.com/fabriziopandini/cluster-api-provider-goofy/api/v1alpha1"
+	cmanager "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/manager"
+	"github.com/fabriziopandini/cluster-api-provider-goofy/pkg/server/api"
+	"github.com/fabriziopandini/cluster-api-provider-goofy/pkg/server/etcd"
 )
 
 const (
 	debugPort = 19000
 
 	// This range allow for 4k clusters, which is 4 times the goal we have in mind for
-	// the first iteration of stress tests
+	// the first iteration of stress tests.
 
 	minPort = 20000
 	maxPort = 24000
@@ -313,10 +315,9 @@ func (m *WorkloadClustersMux) AddAPIServer(wclName, podName string, caCert *x509
 		}
 	}()
 
-	select {
-	case <-startCh:
-		time.Sleep(250 * time.Microsecond)
-	}
+	<-startCh
+	time.Sleep(250 * time.Microsecond)
+
 	if startErr == nil {
 		m.log.Info("WorkloadClusterListener successfully started", "listenerName", wclName, "address", wcl.Address())
 		return nil
@@ -360,7 +361,7 @@ func (m *WorkloadClustersMux) AddEtcdMember(wclName, podName string, caCert *x50
 
 		certificate, err := tls.X509KeyPair(certs.EncodeCertPEM(cert), certs.EncodePrivateKeyPEM(key))
 		if err != nil {
-
+			return errors.Wrapf(err, "failed to create X509KeyPair for etcd member %s", podName)
 		}
 		wcl.etcdServingCertificates[podName] = &certificate
 	}

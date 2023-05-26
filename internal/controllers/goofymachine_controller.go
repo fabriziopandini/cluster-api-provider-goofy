@@ -21,44 +21,42 @@ import (
 	"context"
 	"crypto/rsa"
 	"fmt"
-	"github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud"
-	cloudv1 "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/api/v1alpha1"
-	"github.com/fabriziopandini/cluster-api-provider-goofy/pkg/server"
+	"math/rand"
+	"time"
+
+	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
-	"math/rand"
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/annotations"
 	"sigs.k8s.io/cluster-api/util/certs"
 	"sigs.k8s.io/cluster-api/util/conditions"
 	clog "sigs.k8s.io/cluster-api/util/log"
 	"sigs.k8s.io/cluster-api/util/patch"
+	"sigs.k8s.io/cluster-api/util/predicates"
 	"sigs.k8s.io/cluster-api/util/secret"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
-	"time"
-
-	"github.com/pkg/errors"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
-	"sigs.k8s.io/controller-runtime/pkg/source"
-
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	"sigs.k8s.io/cluster-api/util"
-	"sigs.k8s.io/cluster-api/util/predicates"
 
 	infrav1 "github.com/fabriziopandini/cluster-api-provider-goofy/api/v1alpha1"
+	"github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud"
+	cloudv1 "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/api/v1alpha1"
+	"github.com/fabriziopandini/cluster-api-provider-goofy/pkg/server"
 )
 
 // GoofyMachineReconciler reconciles a GoofyMachine object.
 type GoofyMachineReconciler struct {
 	client.Client
 	CloudMgr     cloud.Manager
-	ApiServerMux *server.WorkloadClustersMux
+	APIServerMux *server.WorkloadClustersMux
 
 	// WatchFilterValue is the label value used to filter events prior to reconciliation.
 	WatchFilterValue string
@@ -66,7 +64,7 @@ type GoofyMachineReconciler struct {
 
 // +kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=goofymachines,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=goofymachines/status;goofymachines/finalizers,verbs=get;update;patch
-// +kubebuilder:rbac:groups=cluster.x-k8s.io,resources=clusters;machines,verbs=get;list;watch
+// +kubebuilder:rbac:groups=cluster.x-k8s.io,resources=clusters;machinesets;machines,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch
 
 // Reconcile reads that state of the cluster for a GoofyMachine object and makes changes based on the state read
@@ -232,184 +230,188 @@ func (r *GoofyMachineReconciler) reconcileNormal(ctx context.Context, cluster *c
 		return ctrl.Result{}, errors.Wrapf(err, "failed to create Node")
 	}
 
-	// If the machine is a control plane:
-	if util.IsControlPlaneMachine(machine) {
+	// NOTE: this can probably go up, after the VM is created
+	goofyMachine.Spec.ProviderID = &node.Spec.ProviderID
+	goofyMachine.Status.Ready = true
 
-		// If there is not yet an etcd member listener for this machine.
-		etcdMember := fmt.Sprintf("etcd-%s", goofyMachine.Name)
-		if !r.ApiServerMux.HasEtcdMember(resourceGroup, etcdMember) {
-			// Getting the etcd CA
-			s, err := secret.Get(ctx, r.Client, client.ObjectKeyFromObject(cluster), secret.EtcdCA)
-			if err != nil {
-				return ctrl.Result{}, errors.Wrapf(err, "failed to get etcd CA")
-			}
-			certData, exists := s.Data[secret.TLSCrtDataName]
-			if !exists {
-				return ctrl.Result{}, errors.Errorf("invalid etcd CA: missing data for %s", secret.TLSCrtDataName)
-			}
+	if !util.IsControlPlaneMachine(machine) {
+		return ctrl.Result{}, nil
+	}
 
-			cert, err := certs.DecodeCertPEM(certData)
-			if err != nil {
-				return ctrl.Result{}, errors.Wrapf(err, "invalid etcd CA: invalid %s", secret.TLSCrtDataName)
-			}
-
-			keyData, exists := s.Data[secret.TLSKeyDataName]
-			if !exists {
-				return ctrl.Result{}, errors.Errorf("invalid etcd CA: missing data for %s", secret.TLSCrtDataName)
-			}
-
-			key, err := certs.DecodePrivateKeyPEM(keyData)
-			if err != nil {
-				return ctrl.Result{}, errors.Wrapf(err, "invalid etcd CA: invalid %s", secret.TLSCrtDataName)
-			}
-
-			if err := r.ApiServerMux.AddEtcdMember(resourceGroup, etcdMember, cert, key.(*rsa.PrivateKey)); err != nil {
-				return ctrl.Result{}, errors.Wrap(err, "failed to start etcd member")
-			}
+	// If there is not yet an etcd member listener for this machine.
+	etcdMember := fmt.Sprintf("etcd-%s", goofyMachine.Name)
+	if !r.APIServerMux.HasEtcdMember(resourceGroup, etcdMember) {
+		// Getting the etcd CA
+		s, err := secret.Get(ctx, r.Client, client.ObjectKeyFromObject(cluster), secret.EtcdCA)
+		if err != nil {
+			return ctrl.Result{}, errors.Wrapf(err, "failed to get etcd CA")
+		}
+		certData, exists := s.Data[secret.TLSCrtDataName]
+		if !exists {
+			return ctrl.Result{}, errors.Errorf("invalid etcd CA: missing data for %s", secret.TLSCrtDataName)
 		}
 
-		// If there is not yet an API server listener for this machine.
-		apiServer := fmt.Sprintf("kube-apiserver-%s", goofyMachine.Name)
-		if !r.ApiServerMux.HasAPIServer(resourceGroup, apiServer) {
-			// Getting the Kubernetes CA
-			s, err := secret.Get(ctx, r.Client, client.ObjectKeyFromObject(cluster), secret.ClusterCA)
-			if err != nil {
-				return ctrl.Result{}, errors.Wrapf(err, "failed to get cluster CA")
-			}
-			certData, exists := s.Data[secret.TLSCrtDataName]
-			if !exists {
-				return ctrl.Result{}, errors.Errorf("invalid cluster CA: missing data for %s", secret.TLSCrtDataName)
-			}
-
-			cert, err := certs.DecodeCertPEM(certData)
-			if err != nil {
-				return ctrl.Result{}, errors.Wrapf(err, "invalid cluster CA: invalid %s", secret.TLSCrtDataName)
-			}
-
-			keyData, exists := s.Data[secret.TLSKeyDataName]
-			if !exists {
-				return ctrl.Result{}, errors.Errorf("invalid cluster CA: missing data for %s", secret.TLSCrtDataName)
-			}
-
-			key, err := certs.DecodePrivateKeyPEM(keyData)
-			if err != nil {
-				return ctrl.Result{}, errors.Wrapf(err, "invalid cluster CA: invalid %s", secret.TLSCrtDataName)
-			}
-
-			// Adding the APIServer.
-			// NOTE: When you add the first APIServer, the workload cluster listener is started.
-			if err := r.ApiServerMux.AddAPIServer(resourceGroup, apiServer, cert, key.(*rsa.PrivateKey)); err != nil {
-				return ctrl.Result{}, errors.Wrap(err, "failed to start API server")
-			}
+		cert, err := certs.DecodeCertPEM(certData)
+		if err != nil {
+			return ctrl.Result{}, errors.Wrapf(err, "invalid etcd CA: invalid %s", secret.TLSCrtDataName)
 		}
 
-		// TBD is this is the right point in the sequence, the pod shows up after API server is running.
+		keyData, exists := s.Data[secret.TLSKeyDataName]
+		if !exists {
+			return ctrl.Result{}, errors.Errorf("invalid etcd CA: missing data for %s", secret.TLSCrtDataName)
+		}
 
-		etcdPod := &corev1.Pod{
-			ObjectMeta: metav1.ObjectMeta{
-				Namespace: metav1.NamespaceSystem,
-				Name:      etcdMember,
-			},
-			Status: corev1.PodStatus{
-				Phase: corev1.PodRunning,
-				Conditions: []corev1.PodCondition{
-					{
-						Type:   corev1.PodReady,
-						Status: corev1.ConditionTrue,
-					},
+		key, err := certs.DecodePrivateKeyPEM(keyData)
+		if err != nil {
+			return ctrl.Result{}, errors.Wrapf(err, "invalid etcd CA: invalid %s", secret.TLSCrtDataName)
+		}
+
+		if err := r.APIServerMux.AddEtcdMember(resourceGroup, etcdMember, cert, key.(*rsa.PrivateKey)); err != nil {
+			return ctrl.Result{}, errors.Wrap(err, "failed to start etcd member")
+		}
+	}
+
+	// If there is not yet an API server listener for this machine.
+	apiServer := fmt.Sprintf("kube-apiserver-%s", goofyMachine.Name)
+	if !r.APIServerMux.HasAPIServer(resourceGroup, apiServer) {
+		// Getting the Kubernetes CA
+		s, err := secret.Get(ctx, r.Client, client.ObjectKeyFromObject(cluster), secret.ClusterCA)
+		if err != nil {
+			return ctrl.Result{}, errors.Wrapf(err, "failed to get cluster CA")
+		}
+		certData, exists := s.Data[secret.TLSCrtDataName]
+		if !exists {
+			return ctrl.Result{}, errors.Errorf("invalid cluster CA: missing data for %s", secret.TLSCrtDataName)
+		}
+
+		cert, err := certs.DecodeCertPEM(certData)
+		if err != nil {
+			return ctrl.Result{}, errors.Wrapf(err, "invalid cluster CA: invalid %s", secret.TLSCrtDataName)
+		}
+
+		keyData, exists := s.Data[secret.TLSKeyDataName]
+		if !exists {
+			return ctrl.Result{}, errors.Errorf("invalid cluster CA: missing data for %s", secret.TLSCrtDataName)
+		}
+
+		key, err := certs.DecodePrivateKeyPEM(keyData)
+		if err != nil {
+			return ctrl.Result{}, errors.Wrapf(err, "invalid cluster CA: invalid %s", secret.TLSCrtDataName)
+		}
+
+		// Adding the APIServer.
+		// NOTE: When you add the first APIServer, the workload cluster listener is started.
+		if err := r.APIServerMux.AddAPIServer(resourceGroup, apiServer, cert, key.(*rsa.PrivateKey)); err != nil {
+			return ctrl.Result{}, errors.Wrap(err, "failed to start API server")
+		}
+	}
+
+	// TBD is this is the right point in the sequence, the pod shows up after API server is running.
+
+	etcdPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: metav1.NamespaceSystem,
+			Name:      etcdMember,
+		},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodRunning,
+			Conditions: []corev1.PodCondition{
+				{
+					Type:   corev1.PodReady,
+					Status: corev1.ConditionTrue,
 				},
 			},
+		},
+	}
+	if err := cloudClient.Get(ctx, client.ObjectKeyFromObject(etcdPod), etcdPod); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return ctrl.Result{}, errors.Wrapf(err, "failed to get etcdPod Pod")
 		}
-		if err := cloudClient.Get(ctx, client.ObjectKeyFromObject(etcdPod), etcdPod); err != nil {
-			if !apierrors.IsNotFound(err) {
-				return ctrl.Result{}, errors.Wrapf(err, "failed to get etcdPod Pod")
-			}
 
-			etcdPod.Labels = map[string]string{
-				"component": "etcd",
+		etcdPod.Labels = map[string]string{
+			"component": "etcd",
+			"tier":      "control-plane",
+		}
+		etcdPod.Annotations = map[string]string{
+			// TODO: read this from existing etcd pods, if any.
+			"etcd.internal.goofy.cluster.x-k8s.io/cluster-id": fmt.Sprintf("%d", rand.Uint32()),
+			"etcd.internal.goofy.cluster.x-k8s.io/member-id":  fmt.Sprintf("%d", rand.Uint32()),
+			// TODO: set this only if there are no other leaders.
+			"etcd.internal.goofy.cluster.x-k8s.io/leader-from": time.Now().Format(time.RFC3339),
+		}
+
+		if err := cloudClient.Create(ctx, etcdPod); err != nil && !apierrors.IsAlreadyExists(err) {
+			return ctrl.Result{}, errors.Wrapf(err, "failed to create etcdPod Pod")
+		}
+	}
+
+	apiServerPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: metav1.NamespaceSystem,
+			Name:      apiServer,
+			Labels: map[string]string{
+				"component": "kube-apiserver",
 				"tier":      "control-plane",
-			}
-			etcdPod.Annotations = map[string]string{
-				// TODO: read this from existing etcd pods, if any.
-				"etcd.internal.goofy.cluster.x-k8s.io/cluster-id": fmt.Sprintf("%d", rand.Uint32()),
-				"etcd.internal.goofy.cluster.x-k8s.io/member-id":  fmt.Sprintf("%d", rand.Uint32()),
-				// TODO: set this only if there are no other leaders.
-				"etcd.internal.goofy.cluster.x-k8s.io/leader-from": time.Now().Format(time.RFC3339),
-			}
+			},
+		},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodRunning,
+			Conditions: []corev1.PodCondition{
+				{
+					Type:   corev1.PodReady,
+					Status: corev1.ConditionTrue,
+				},
+			},
+		},
+	}
+	if err := cloudClient.Create(ctx, apiServerPod); err != nil && !apierrors.IsAlreadyExists(err) {
+		return ctrl.Result{}, errors.Wrapf(err, "failed to create apiServer Pod")
+	}
 
-			if err := cloudClient.Create(ctx, etcdPod); err != nil && !apierrors.IsAlreadyExists(err) {
-				return ctrl.Result{}, errors.Wrapf(err, "failed to create etcdPod Pod")
-			}
-		}
+	schedulerPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: metav1.NamespaceSystem,
+			Name:      fmt.Sprintf("kube-scheduler-%s", goofyMachine.Name),
+			Labels: map[string]string{
+				"component": "kube-scheduler",
+				"tier":      "control-plane",
+			},
+		},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodRunning,
+			Conditions: []corev1.PodCondition{
+				{
+					Type:   corev1.PodReady,
+					Status: corev1.ConditionTrue,
+				},
+			},
+		},
+	}
+	if err := cloudClient.Create(ctx, schedulerPod); err != nil && !apierrors.IsAlreadyExists(err) {
+		return ctrl.Result{}, errors.Wrapf(err, "failed to create scheduler Pod")
+	}
 
-		apiServerPod := &corev1.Pod{
-			ObjectMeta: metav1.ObjectMeta{
-				Namespace: metav1.NamespaceSystem,
-				Name:      apiServer,
-				Labels: map[string]string{
-					"component": "kube-apiserver",
-					"tier":      "control-plane",
+	controllerManagerPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: metav1.NamespaceSystem,
+			Name:      fmt.Sprintf("kube-controller-manager-%s", goofyMachine.Name),
+			Labels: map[string]string{
+				"component": "kube-controller-manager",
+				"tier":      "control-plane",
+			},
+		},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodRunning,
+			Conditions: []corev1.PodCondition{
+				{
+					Type:   corev1.PodReady,
+					Status: corev1.ConditionTrue,
 				},
 			},
-			Status: corev1.PodStatus{
-				Phase: corev1.PodRunning,
-				Conditions: []corev1.PodCondition{
-					{
-						Type:   corev1.PodReady,
-						Status: corev1.ConditionTrue,
-					},
-				},
-			},
-		}
-		if err := cloudClient.Create(ctx, apiServerPod); err != nil && !apierrors.IsAlreadyExists(err) {
-			return ctrl.Result{}, errors.Wrapf(err, "failed to create apiServer Pod")
-		}
-
-		schedulerPod := &corev1.Pod{
-			ObjectMeta: metav1.ObjectMeta{
-				Namespace: metav1.NamespaceSystem,
-				Name:      fmt.Sprintf("kube-scheduler-%s", goofyMachine.Name),
-				Labels: map[string]string{
-					"component": "kube-scheduler",
-					"tier":      "control-plane",
-				},
-			},
-			Status: corev1.PodStatus{
-				Phase: corev1.PodRunning,
-				Conditions: []corev1.PodCondition{
-					{
-						Type:   corev1.PodReady,
-						Status: corev1.ConditionTrue,
-					},
-				},
-			},
-		}
-		if err := cloudClient.Create(ctx, schedulerPod); err != nil && !apierrors.IsAlreadyExists(err) {
-			return ctrl.Result{}, errors.Wrapf(err, "failed to create scheduler Pod")
-		}
-
-		controllerManagerPod := &corev1.Pod{
-			ObjectMeta: metav1.ObjectMeta{
-				Namespace: metav1.NamespaceSystem,
-				Name:      fmt.Sprintf("kube-controller-manager-%s", goofyMachine.Name),
-				Labels: map[string]string{
-					"component": "kube-controller-manager",
-					"tier":      "control-plane",
-				},
-			},
-			Status: corev1.PodStatus{
-				Phase: corev1.PodRunning,
-				Conditions: []corev1.PodCondition{
-					{
-						Type:   corev1.PodReady,
-						Status: corev1.ConditionTrue,
-					},
-				},
-			},
-		}
-		if err := cloudClient.Create(ctx, controllerManagerPod); err != nil && !apierrors.IsAlreadyExists(err) {
-			return ctrl.Result{}, errors.Wrapf(err, "failed to create controller manager Pod")
-		}
+		},
+	}
+	if err := cloudClient.Create(ctx, controllerManagerPod); err != nil && !apierrors.IsAlreadyExists(err) {
+		return ctrl.Result{}, errors.Wrapf(err, "failed to create controller manager Pod")
 	}
 
 	// create kubeadm ClusterRole and ClusterRoleBinding enforced by KCP
@@ -464,14 +466,10 @@ func (r *GoofyMachineReconciler) reconcileNormal(ctx context.Context, cluster *c
 		return ctrl.Result{}, errors.Wrapf(err, "failed to create ConfigMap")
 	}
 
-	// NOTE: this can probably go up, after the VM is created
-	goofyMachine.Spec.ProviderID = &node.Spec.ProviderID
-	goofyMachine.Status.Ready = true
-
 	return ctrl.Result{}, nil
 }
 
-func (r *GoofyMachineReconciler) reconcileDelete(ctx context.Context, goofyMachine *infrav1.GoofyMachine) (ctrl.Result, error) {
+func (r *GoofyMachineReconciler) reconcileDelete(_ context.Context, goofyMachine *infrav1.GoofyMachine) (ctrl.Result, error) {
 	// TODO: implement
 	controllerutil.RemoveFinalizer(goofyMachine, infrav1.MachineFinalizer)
 
@@ -485,12 +483,20 @@ func (r *GoofyMachineReconciler) SetupWithManager(ctx context.Context, mgr ctrl.
 		WithOptions(options).
 		WithEventFilter(predicates.ResourceNotPausedAndHasFilterLabel(ctrl.LoggerFrom(ctx), r.WatchFilterValue)).
 		Watches(
-			&source.Kind{Type: &clusterv1.Machine{}},
-			handler.EnqueueRequestsFromMapFunc(util.ClusterToInfrastructureMapFunc(ctx, infrav1.GroupVersion.WithKind("GoofyMachine"), mgr.GetClient(), &infrav1.GoofyMachine{})),
+			&clusterv1.Machine{},
+			handler.EnqueueRequestsFromMapFunc(util.MachineToInfrastructureMapFunc(infrav1.GroupVersion.WithKind("GoofyMachine"))),
 			builder.WithPredicates(
 				predicates.ClusterUnpaused(ctrl.LoggerFrom(ctx)),
 			),
-		).Complete(r)
+		).
+		Watches(
+			&clusterv1.Cluster{},
+			handler.EnqueueRequestsFromMapFunc(util.ClusterToInfrastructureMapFunc(ctx, infrav1.GroupVersion.WithKind("GoofyMachine"), mgr.GetClient(), &infrav1.GoofyCluster{})),
+			builder.WithPredicates(
+				predicates.ClusterUnpaused(ctrl.LoggerFrom(ctx)),
+			),
+		).
+		Complete(r)
 	if err != nil {
 		return errors.Wrap(err, "failed setting up with a controller manager")
 	}

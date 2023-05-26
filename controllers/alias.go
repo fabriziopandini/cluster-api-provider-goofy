@@ -19,14 +19,14 @@ package controllers
 
 import (
 	"context"
-	"github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud"
-	"github.com/fabriziopandini/cluster-api-provider-goofy/pkg/server"
 
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 
 	goofycontrollers "github.com/fabriziopandini/cluster-api-provider-goofy/internal/controllers"
+	"github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud"
+	"github.com/fabriziopandini/cluster-api-provider-goofy/pkg/server"
 )
 
 // Following types provides access to reconcilers implemented in internal/controllers, thus
@@ -36,7 +36,7 @@ import (
 type GoofyClusterReconciler struct {
 	Client       client.Client
 	CloudMgr     cloud.Manager
-	ApiServerMux *server.WorkloadClustersMux // TODO: find a way to use an interface here
+	APIServerMux *server.WorkloadClustersMux // TODO: find a way to use an interface here
 
 	// WatchFilterValue is the label value used to filter events prior to reconciliation.
 	WatchFilterValue string
@@ -47,7 +47,7 @@ func (r *GoofyClusterReconciler) SetupWithManager(ctx context.Context, mgr ctrl.
 	return (&goofycontrollers.GoofyClusterReconciler{
 		Client:           r.Client,
 		CloudMgr:         r.CloudMgr,
-		ApiServerMux:     r.ApiServerMux,
+		APIServerMux:     r.APIServerMux,
 		WatchFilterValue: r.WatchFilterValue,
 	}).SetupWithManager(ctx, mgr, options)
 }
@@ -56,7 +56,7 @@ func (r *GoofyClusterReconciler) SetupWithManager(ctx context.Context, mgr ctrl.
 type GoofyMachineReconciler struct {
 	Client       client.Client
 	CloudMgr     cloud.Manager
-	ApiServerMux *server.WorkloadClustersMux // TODO: find a way to use an interface here
+	APIServerMux *server.WorkloadClustersMux // TODO: find a way to use an interface here
 
 	// WatchFilterValue is the label value used to filter events prior to reconciliation.
 	WatchFilterValue string
@@ -67,7 +67,7 @@ func (r *GoofyMachineReconciler) SetupWithManager(ctx context.Context, mgr ctrl.
 	return (&goofycontrollers.GoofyMachineReconciler{
 		Client:           r.Client,
 		CloudMgr:         r.CloudMgr,
-		ApiServerMux:     r.ApiServerMux,
+		APIServerMux:     r.APIServerMux,
 		WatchFilterValue: r.WatchFilterValue,
 	}).SetupWithManager(ctx, mgr, options)
 }

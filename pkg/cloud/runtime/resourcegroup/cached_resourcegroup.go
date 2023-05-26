@@ -2,9 +2,11 @@ package resourcegroup
 
 import (
 	"context"
+
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
 	ccache "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/cache"
 	cclient "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/client"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 var _ ResourceGroup = &cachedResourceGroup{}

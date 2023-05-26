@@ -3,12 +3,14 @@ package source
 import (
 	"context"
 	"fmt"
+
+	"k8s.io/client-go/util/workqueue"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
 	ccache "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/cache"
 	cevent "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/event"
 	chandler "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/handler"
 	cpredicate "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/predicate"
-	"k8s.io/client-go/util/workqueue"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // Kind is used to provide a source of events originating inside the resourceGroup from Watches (e.g. Resource Create).
@@ -20,7 +22,7 @@ type Kind struct {
 var _ Source = &Kind{}
 
 // Start implement Source.
-func (ks *Kind) Start(ctx context.Context, handler chandler.EventHandler, queue workqueue.RateLimitingInterface, prct ...cpredicate.Predicate) error {
+func (ks *Kind) Start(_ context.Context, handler chandler.EventHandler, queue workqueue.RateLimitingInterface, prct ...cpredicate.Predicate) error {
 	if ks.Type == nil {
 		return fmt.Errorf("must specify Kind.Type")
 	}

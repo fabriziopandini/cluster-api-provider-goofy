@@ -19,34 +19,32 @@ package controllers
 
 import (
 	"context"
-	"github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud"
-	"github.com/fabriziopandini/cluster-api-provider-goofy/pkg/server"
-	"k8s.io/klog/v2"
-	"sigs.k8s.io/cluster-api/util/patch"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sync"
 
 	"github.com/pkg/errors"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/klog/v2"
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	"sigs.k8s.io/cluster-api/util"
+	"sigs.k8s.io/cluster-api/util/patch"
+	"sigs.k8s.io/cluster-api/util/predicates"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
-	"sigs.k8s.io/controller-runtime/pkg/source"
-
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	"sigs.k8s.io/cluster-api/util"
-	"sigs.k8s.io/cluster-api/util/predicates"
 
 	infrav1 "github.com/fabriziopandini/cluster-api-provider-goofy/api/v1alpha1"
+	"github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud"
+	"github.com/fabriziopandini/cluster-api-provider-goofy/pkg/server"
 )
 
 // GoofyClusterReconciler reconciles a GoofyCluster object.
 type GoofyClusterReconciler struct {
 	client.Client
 	CloudMgr     cloud.Manager
-	ApiServerMux *server.WorkloadClustersMux
+	APIServerMux *server.WorkloadClustersMux
 
 	// WatchFilterValue is the label value used to filter events prior to reconciliation.
 	WatchFilterValue string
@@ -93,7 +91,7 @@ func (r *GoofyClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	// If the controller is restarting and there is already an existing set of GoofyClusters,
-	// tries to rebuild the internal state of the ApiServerMux accordingly.
+	// tries to rebuild the internal state of the APIServerMux accordingly.
 	if ret, err := r.reconcileHotRestart(ctx); !ret.IsZero() || err != nil {
 		return ret, err
 	}
@@ -123,7 +121,7 @@ func (r *GoofyClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	return r.reconcileNormal(ctx, cluster, goofyCluster)
 }
 
-// reconcileHotRestart tries to setup the ApiServerMux according to an existing sets of GoofyCluster.
+// reconcileHotRestart tries to setup the APIServerMux according to an existing sets of GoofyCluster.
 // NOTE: This is done at best effort in order to make iterative development workflow easier.
 func (r *GoofyClusterReconciler) reconcileHotRestart(ctx context.Context) (ctrl.Result, error) {
 	if !r.isHotRestart() {
@@ -137,7 +135,7 @@ func (r *GoofyClusterReconciler) reconcileHotRestart(ctx context.Context) (ctrl.
 	if err := r.Client.List(ctx, goofyClusterList); err != nil {
 		return ctrl.Result{}, err
 	}
-	r.ApiServerMux.HotRestart(goofyClusterList)
+	r.APIServerMux.HotRestart(goofyClusterList)
 
 	r.hostRestartDone = true
 	return ctrl.Result{}, nil
@@ -149,7 +147,7 @@ func (r *GoofyClusterReconciler) isHotRestart() bool {
 	return !r.hostRestartDone
 }
 
-func (r *GoofyClusterReconciler) reconcileNormal(ctx context.Context, cluster *clusterv1.Cluster, goofyCluster *infrav1.GoofyCluster) (ctrl.Result, error) {
+func (r *GoofyClusterReconciler) reconcileNormal(_ context.Context, cluster *clusterv1.Cluster, goofyCluster *infrav1.GoofyCluster) (ctrl.Result, error) {
 	// Compute the resource group unique name.
 	resourceGroup := klog.KObj(cluster).String()
 
@@ -166,8 +164,8 @@ func (r *GoofyClusterReconciler) reconcileNormal(ctx context.Context, cluster *c
 	// the operation is a no-op.
 	// NOTE: We are using reconcilerGroup also as a name for the listener for sake of simplicity.
 	// IMPORTANT: The fact that both the listener and the resourceGroup for a workload cluster have
-	// the same name is used by the current implementation of the resourceGroup resolvers in the ApiServerMux.
-	listener, err := r.ApiServerMux.InitWorkloadClusterListener(resourceGroup)
+	// the same name is used by the current implementation of the resourceGroup resolvers in the APIServerMux.
+	listener, err := r.APIServerMux.InitWorkloadClusterListener(resourceGroup)
 	if err != nil {
 		return ctrl.Result{}, errors.Wrap(err, "failed to init the listener for the workload cluster")
 	}
@@ -184,7 +182,7 @@ func (r *GoofyClusterReconciler) reconcileNormal(ctx context.Context, cluster *c
 	return ctrl.Result{}, nil
 }
 
-func (r *GoofyClusterReconciler) reconcileDelete(ctx context.Context, goofyCluster *infrav1.GoofyCluster) (ctrl.Result, error) {
+func (r *GoofyClusterReconciler) reconcileDelete(_ context.Context, goofyCluster *infrav1.GoofyCluster) (ctrl.Result, error) {
 	// TODO: implement
 	controllerutil.RemoveFinalizer(goofyCluster, infrav1.ClusterFinalizer)
 
@@ -198,7 +196,7 @@ func (r *GoofyClusterReconciler) SetupWithManager(ctx context.Context, mgr ctrl.
 		WithOptions(options).
 		WithEventFilter(predicates.ResourceNotPausedAndHasFilterLabel(ctrl.LoggerFrom(ctx), r.WatchFilterValue)).
 		Watches(
-			&source.Kind{Type: &clusterv1.Cluster{}},
+			&clusterv1.Cluster{},
 			handler.EnqueueRequestsFromMapFunc(util.ClusterToInfrastructureMapFunc(ctx, infrav1.GroupVersion.WithKind("GoofyCluster"), mgr.GetClient(), &infrav1.GoofyCluster{})),
 			builder.WithPredicates(
 				predicates.ClusterUnpaused(ctrl.LoggerFrom(ctx)),

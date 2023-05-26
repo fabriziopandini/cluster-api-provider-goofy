@@ -3,15 +3,17 @@ package controller
 import (
 	"context"
 	"fmt"
+	"sync"
+	"time"
+
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/util/workqueue"
+	ctrl "sigs.k8s.io/controller-runtime"
+
 	chandler "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/handler"
 	cpredicate "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/predicate"
 	creconciler "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/reconcile"
 	csource "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/source"
-	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/client-go/util/workqueue"
-	ctrl "sigs.k8s.io/controller-runtime"
-	"sync"
-	"time"
 )
 
 // Options are the arguments for creating a new Controller.
@@ -102,7 +104,6 @@ func (c *controller) Start(ctx context.Context) error {
 	go func() {
 		<-ctx.Done()
 		c.queue.ShutDown()
-		// log.Info("Controller queue stopped")
 	}()
 
 	for _, watch := range c.startWatches {
@@ -121,20 +122,18 @@ func (c *controller) Start(ctx context.Context) error {
 		wg.Add(c.concurrency)
 		for i := 0; i < c.concurrency; i++ {
 			go func() {
-				workers += 1
+				workers++
 				defer wg.Done()
-				for c.processNextWorkItem(ctx) {
+				for c.processNextWorkItem(ctx) { //nolint:revive
 				}
 			}()
 		}
 
 		<-ctx.Done()
-		// log.Info("Shutdown signal received, waiting for all workers to finish")
 		wg.Wait()
-		// log.Info("All workers finished")
 	}()
 
-	if err := wait.PollImmediate(50*time.Millisecond, 5*time.Second, func() (done bool, err error) {
+	if err := wait.PollUntilContextTimeout(ctx, 50*time.Millisecond, 5*time.Second, false, func(ctx context.Context) (done bool, err error) {
 		if workers < c.concurrency {
 			return false, nil
 		}

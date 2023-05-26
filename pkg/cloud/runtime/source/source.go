@@ -2,9 +2,11 @@ package source
 
 import (
 	"context"
+
+	"k8s.io/client-go/util/workqueue"
+
 	chandler "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/handler"
 	cpredicate "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/predicate"
-	"k8s.io/client-go/util/workqueue"
 )
 
 // Source is a source of events (e.g. Create, Update, Delete operations on resources)

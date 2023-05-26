@@ -3,14 +3,15 @@ package cache
 import (
 	"context"
 	"fmt"
+	"sync"
+	"time"
+
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/util/workqueue"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sync"
-	"time"
 )
 
 const lastSyncTimeAnnotation = "internal.goofy.cluster.x-k8s.io/last-sync"
@@ -30,7 +31,6 @@ func (c *cache) startSyncer(ctx context.Context) error {
 	go func() {
 		<-ctx.Done()
 		c.syncQueue.ShutDown()
-		// log.Info("Garbage syncer queue stopped")
 	}()
 
 	syncLoopStarted := false
@@ -42,7 +42,6 @@ func (c *cache) startSyncer(ctx context.Context) error {
 			case <-time.After(c.syncPeriod / 4):
 				c.syncGroup(ctx)
 			case <-ctx.Done():
-				// log.Info("Sync loop stopped")
 				return
 			}
 		}
@@ -55,19 +54,17 @@ func (c *cache) startSyncer(ctx context.Context) error {
 		wg.Add(c.syncConcurrency)
 		for i := 0; i < c.syncConcurrency; i++ {
 			go func() {
-				workers += 1
+				workers++
 				defer wg.Done()
-				for c.processSyncWorkItem(ctx) {
+				for c.processSyncWorkItem(ctx) { //nolint:revive
 				}
 			}()
 		}
 		<-ctx.Done()
-		// log.Info("Shutdown signal received, waiting for all workers to finish")
 		wg.Wait()
-		// log.Info("All workers finished")
 	}()
 
-	if err := wait.PollImmediate(50*time.Millisecond, 5*time.Second, func() (done bool, err error) {
+	if err := wait.PollUntilContextTimeout(ctx, 50*time.Millisecond, 5*time.Second, false, func(ctx context.Context) (done bool, err error) {
 		if !syncLoopStarted {
 			return false, nil
 		}
@@ -76,7 +73,7 @@ func (c *cache) startSyncer(ctx context.Context) error {
 		return fmt.Errorf("failed to start sync loop: %v", err)
 	}
 
-	if err := wait.PollImmediate(50*time.Millisecond, 5*time.Second, func() (done bool, err error) {
+	if err := wait.PollUntilContextTimeout(ctx, 50*time.Millisecond, 5*time.Second, false, func(ctx context.Context) (done bool, err error) {
 		if workers < c.syncConcurrency {
 			return false, nil
 		}
@@ -100,8 +97,6 @@ func (c *cache) syncGroup(ctx context.Context) {
 }
 
 func (c *cache) syncResourceGroupTracker(_ context.Context, resourceGroup string, tracker *resourceGroupTracker) int {
-	// log := ctrl.LoggerFrom(ctx)
-
 	tracker.lock.RLock()
 	defer tracker.lock.RUnlock()
 
@@ -110,8 +105,7 @@ func (c *cache) syncResourceGroupTracker(_ context.Context, resourceGroup string
 	for gvk, objects := range tracker.objects {
 		for key, obj := range objects {
 			if lastSync, ok := lastSyncTimeAnnotationValue(obj); ok {
-				if !lastSync.Before(syncBeforeTime) {
-					// log.Info("Resource", "resourceGroup", resourceGroup, gvk.Kind, res.GetName(), "timeToSync", lastSync.Sub(syncBeforeTime).String())
+				if lastSync.After(syncBeforeTime) {
 					continue
 				}
 			}
@@ -166,7 +160,7 @@ func (c *cache) processSyncWorkItem(ctx context.Context) bool {
 	obj.SetAnnotations(appendAnnotations(obj, lastSyncTimeAnnotation, now.Format(time.RFC3339)))
 	tracker.objects[rr.gvk][rr.key] = obj
 
-	log.Info("Object sync triggered", "resourceGroup", rr.resourceGroup, rr.gvk.Kind, rr.key)
+	log.V(4).Info("Object sync triggered", "resourceGroup", rr.resourceGroup, rr.gvk.Kind, rr.key)
 	c.informSync(rr.resourceGroup, obj)
 	return true
 }

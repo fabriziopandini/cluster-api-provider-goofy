@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"k8s.io/apimachinery/pkg/api/errors"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -18,7 +18,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 )
 
-// TODO: consider if to move to internal
+// TODO: consider if to move to internal.
 type Cache interface {
 	Start(ctx context.Context) error
 
@@ -80,7 +80,7 @@ type ownReference struct {
 func newOwnReferenceFromOwnerReference(namespace string, o metav1.OwnerReference) (*ownReference, error) {
 	gv, err := schema.ParseGroupVersion(o.APIVersion)
 	if err != nil {
-		return nil, errors.NewBadRequest(fmt.Sprintf("invalid APIVersion in ownerReferences: %s", o.APIVersion))
+		return nil, apierrors.NewBadRequest(fmt.Sprintf("invalid APIVersion in ownerReferences: %s", o.APIVersion))
 	}
 	ownerGVK := gv.WithKind(o.Kind)
 	ownerKey := types.NamespacedName{
@@ -120,10 +120,10 @@ func (c *cache) Start(ctx context.Context) error {
 	log.Info("Starting cache")
 
 	if err := c.startGarbageCollector(ctx); err != nil {
-		return nil
+		return err
 	}
 	if err := c.startSyncer(ctx); err != nil {
-		return nil
+		return err
 	}
 
 	c.started = true
@@ -159,7 +159,7 @@ func (c *cache) resourceGroupTracker(resourceGroup string) *resourceGroupTracker
 func (c *cache) gvkGetAndSet(obj runtime.Object) (schema.GroupVersionKind, error) {
 	gvk, err := apiutil.GVKForObject(obj, c.scheme)
 	if err != nil {
-		return schema.GroupVersionKind{}, errors.NewInternalError(err)
+		return schema.GroupVersionKind{}, apierrors.NewInternalError(err)
 	}
 
 	obj.GetObjectKind().SetGroupVersionKind(gvk)

@@ -3,8 +3,9 @@ package server
 import (
 	"crypto/rsa"
 	"crypto/x509"
-	"github.com/pkg/errors"
 	"net"
+
+	"github.com/pkg/errors"
 	"sigs.k8s.io/cluster-api/util/certs"
 )
 
