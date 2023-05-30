@@ -478,27 +478,65 @@ func (r *GoofyMachineReconciler) reconcileDelete(_ context.Context, goofyMachine
 
 // SetupWithManager will add watches for this controller.
 func (r *GoofyMachineReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager, options controller.Options) error {
-	err := ctrl.NewControllerManagedBy(mgr).
+	clusterToGoofyMachines, err := util.ClusterToObjectsMapper(mgr.GetClient(), &infrav1.GoofyMachineList{}, mgr.GetScheme())
+	if err != nil {
+		return err
+	}
+
+	err = ctrl.NewControllerManagedBy(mgr).
 		For(&infrav1.GoofyMachine{}).
 		WithOptions(options).
 		WithEventFilter(predicates.ResourceNotPausedAndHasFilterLabel(ctrl.LoggerFrom(ctx), r.WatchFilterValue)).
 		Watches(
 			&clusterv1.Machine{},
 			handler.EnqueueRequestsFromMapFunc(util.MachineToInfrastructureMapFunc(infrav1.GroupVersion.WithKind("GoofyMachine"))),
-			builder.WithPredicates(
-				predicates.ClusterUnpaused(ctrl.LoggerFrom(ctx)),
-			),
+		).
+		Watches(
+			&infrav1.GoofyCluster{},
+			handler.EnqueueRequestsFromMapFunc(r.GoofyClusterToGoofyMachines),
 		).
 		Watches(
 			&clusterv1.Cluster{},
-			handler.EnqueueRequestsFromMapFunc(util.ClusterToInfrastructureMapFunc(ctx, infrav1.GroupVersion.WithKind("GoofyMachine"), mgr.GetClient(), &infrav1.GoofyCluster{})),
+			handler.EnqueueRequestsFromMapFunc(clusterToGoofyMachines),
 			builder.WithPredicates(
-				predicates.ClusterUnpaused(ctrl.LoggerFrom(ctx)),
+				predicates.ClusterUnpausedAndInfrastructureReady(ctrl.LoggerFrom(ctx)),
 			),
 		).
 		Complete(r)
+
 	if err != nil {
 		return errors.Wrap(err, "failed setting up with a controller manager")
 	}
 	return nil
+}
+
+func (r *GoofyMachineReconciler) GoofyClusterToGoofyMachines(ctx context.Context, o client.Object) []ctrl.Request {
+	result := []ctrl.Request{}
+	c, ok := o.(*infrav1.GoofyCluster)
+	if !ok {
+		panic(fmt.Sprintf("Expected a GoofyCluster but got a %T", o))
+	}
+
+	cluster, err := util.GetOwnerCluster(ctx, r.Client, c.ObjectMeta)
+	switch {
+	case apierrors.IsNotFound(err) || cluster == nil:
+		return result
+	case err != nil:
+		return result
+	}
+
+	labels := map[string]string{clusterv1.ClusterNameLabel: cluster.Name}
+	machineList := &clusterv1.MachineList{}
+	if err := r.Client.List(ctx, machineList, client.InNamespace(c.Namespace), client.MatchingLabels(labels)); err != nil {
+		return nil
+	}
+	for _, m := range machineList.Items {
+		if m.Spec.InfrastructureRef.Name == "" {
+			continue
+		}
+		name := client.ObjectKey{Namespace: m.Namespace, Name: m.Name}
+		result = append(result, ctrl.Request{NamespacedName: name})
+	}
+
+	return result
 }
