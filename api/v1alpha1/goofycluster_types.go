@@ -37,11 +37,11 @@ type GoofyClusterSpec struct {
 }
 
 type GoofyClusterStatus struct {
-	// Ready denotes that the docker cluster (infrastructure) is ready.
+	// Ready denotes that the goofy cluster (infrastructure) is ready.
 	// +optional
 	Ready bool `json:"ready"`
 
-	// Conditions defines current service state of the DockerCluster.
+	// Conditions defines current service state of the GoofyCluster.
 	// +optional
 	Conditions clusterv1.Conditions `json:"conditions,omitempty"`
 }
