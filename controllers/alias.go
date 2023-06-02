@@ -66,7 +66,7 @@ type GoofyMachineReconciler struct {
 func (r *GoofyMachineReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager, options controller.Options) error {
 	return (&goofycontrollers.GoofyMachineReconciler{
 		Client:           r.Client,
-		CloudMgr:         r.CloudManager,
+		CloudManager:     r.CloudManager,
 		APIServerMux:     r.APIServerMux,
 		WatchFilterValue: r.WatchFilterValue,
 	}).SetupWithManager(ctx, mgr, options)

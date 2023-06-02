@@ -62,7 +62,7 @@ spec:
           status:
             properties:
               conditions:
-                description: Conditions defines current service state of the DockerCluster.
+                description: Conditions defines current service state of the GoofyCluster.
                 items:
                   description: Condition defines an observation of a Cluster API resource
                     operational state.
@@ -107,7 +107,7 @@ spec:
                   type: object
                 type: array
               ready:
-                description: Ready denotes that the docker cluster (infrastructure)
+                description: Ready denotes that the goofy cluster (infrastructure)
                   is ready.
                 type: boolean
             type: object
