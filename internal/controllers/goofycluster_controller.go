@@ -43,7 +43,7 @@ import (
 // GoofyClusterReconciler reconciles a GoofyCluster object.
 type GoofyClusterReconciler struct {
 	client.Client
-	CloudMgr     cloud.Manager
+	CloudManager cloud.Manager
 	APIServerMux *server.WorkloadClustersMux
 
 	// WatchFilterValue is the label value used to filter events prior to reconciliation.
@@ -158,7 +158,7 @@ func (r *GoofyClusterReconciler) reconcileNormal(_ context.Context, cluster *clu
 	// if the resource group already exists, the operation is a no-op.
 	// NOTE: We are storing in this resource group both the cloud resources (e.g. VM) as
 	// well as Kubernetes resources that are expected to exist on the workload cluster (e.g Nodes).
-	r.CloudMgr.AddResourceGroup(resourceGroup)
+	r.CloudManager.AddResourceGroup(resourceGroup)
 
 	// Initialize a listener for the workload cluster; if the listener has been already initialized
 	// the operation is a no-op.

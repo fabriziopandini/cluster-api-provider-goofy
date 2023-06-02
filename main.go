@@ -21,7 +21,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	_ "net/http/pprof"
 	"os"
 	"time"
 
@@ -69,8 +68,8 @@ var (
 	watchNamespace              string
 	watchFilterValue            string
 	profilerAddress             string
-	machineConcurrency          int
 	clusterConcurrency          int
+	machineConcurrency          int
 	syncPeriod                  time.Duration
 	restConfigQPS               float32
 	restConfigBurst             int
@@ -189,7 +188,6 @@ func main() {
 		RenewDeadline:              &leaderElectionRenewDeadline,
 		RetryPeriod:                &leaderElectionRetryPeriod,
 		LeaderElectionResourceLock: resourcelock.LeasesResourceLock,
-		Namespace:                  watchNamespace,
 		HealthProbeBindAddress:     healthAddr,
 		PprofBindAddress:           profilerAddress,
 		Cache: cache.Options{
@@ -251,21 +249,21 @@ func setupIndexes(_ context.Context, _ ctrl.Manager) {
 }
 
 func setupReconcilers(ctx context.Context, mgr ctrl.Manager) {
-	// start cloud manager
+	// Start cloud manager
 	cloudMgr := cloud.NewManager(cloudScheme)
 	if err := cloudMgr.Start(ctx); err != nil {
 		setupLog.Error(err, "unable to start a cloud manager")
 		os.Exit(1)
 	}
 
-	// start an http server
+	// Start an http server
 	podIP := os.Getenv("POD_IP")
 	apiServerMux := server.NewWorkloadClustersMux(cloudMgr, podIP)
 
-	// setup reconcilers
+	// Setup reconcilers
 	if err := (&controllers.GoofyClusterReconciler{
 		Client:           mgr.GetClient(),
-		CloudMgr:         cloudMgr,
+		CloudManager:     cloudMgr,
 		APIServerMux:     apiServerMux,
 		WatchFilterValue: watchFilterValue,
 	}).SetupWithManager(ctx, mgr, concurrency(clusterConcurrency)); err != nil {
@@ -275,7 +273,7 @@ func setupReconcilers(ctx context.Context, mgr ctrl.Manager) {
 
 	if err := (&controllers.GoofyMachineReconciler{
 		Client:           mgr.GetClient(),
-		CloudMgr:         cloudMgr,
+		CloudManager:     cloudMgr,
 		APIServerMux:     apiServerMux,
 		WatchFilterValue: watchFilterValue,
 	}).SetupWithManager(ctx, mgr, concurrency(machineConcurrency)); err != nil {

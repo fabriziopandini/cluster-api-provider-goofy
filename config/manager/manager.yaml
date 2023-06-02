@@ -16,10 +16,11 @@ spec:
         control-plane: controller-manager
     spec:
       containers:
-      - args:
+      - command:
+        - /manager
+        args:
         - "--leader-elect"
         - "--metrics-bind-addr=localhost:8080"
-        - "--feature-gates="
         image: controller:latest
         name: manager
         env:
@@ -39,6 +40,14 @@ spec:
           httpGet:
             path: /healthz
             port: healthz
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
+          privileged: false
+          runAsUser: 65532
+          runAsGroup: 65532
       terminationGracePeriodSeconds: 10
       serviceAccountName: manager
       tolerations:
@@ -46,3 +55,7 @@ spec:
         key: node-role.kubernetes.io/master
       - effect: NoSchedule
         key: node-role.kubernetes.io/control-plane
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
