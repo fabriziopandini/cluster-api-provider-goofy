@@ -132,7 +132,7 @@ func Test_cache_client(t *testing.T) {
 				require.Error(t, err)
 				require.True(t, apierrors.IsBadRequest(err))
 			})
-			t.Run("fails if referenced object does not exists", func(t *testing.T) {
+			t.Run("fails if referenced object does not exist", func(t *testing.T) {
 				obj := &cloudv1.CloudMachine{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "child",
@@ -249,7 +249,7 @@ func Test_cache_client(t *testing.T) {
 		c := NewCache(scheme).(*cache)
 		c.AddResourceGroup("foo")
 
-		t.Run("fails cloud is empty", func(t *testing.T) {
+		t.Run("fails if resourceGroup is empty", func(t *testing.T) {
 			obj := &cloudv1.CloudMachineList{}
 			err := c.List("", obj)
 			require.Error(t, err)
@@ -287,7 +287,7 @@ func Test_cache_client(t *testing.T) {
 			require.Equal(t, i1.GetObjectKind().GroupVersionKind(), cloudv1.GroupVersion.WithKind(cloudv1.CloudMachineKind), "gvk must be set")
 			require.Contains(t, i1.GetAnnotations(), lastSyncTimeAnnotation, "last sync annotation must be present")
 
-			i2 := obj.Items[0]
+			i2 := obj.Items[1]
 			require.Equal(t, i2.GetObjectKind().GroupVersionKind(), cloudv1.GroupVersion.WithKind(cloudv1.CloudMachineKind), "gvk must be set")
 			require.Contains(t, i2.GetAnnotations(), lastSyncTimeAnnotation, "last sync annotation must be present")
 		})
@@ -400,7 +400,7 @@ func Test_cache_client(t *testing.T) {
 			require.Error(t, err)
 			require.True(t, apierrors.IsConflict(err))
 
-			// TODO: check it have been informed only once
+			// TODO: check if it has been informed only once
 		})
 
 		t.Run("Update with owner references", func(t *testing.T) {
@@ -515,17 +515,6 @@ func Test_cache_client(t *testing.T) {
 			// TODO implement test case
 		})
 
-		t.Run("fails if Object group doesn't exist", func(t *testing.T) {
-			obj := &cloudv1.CloudLoadBalancer{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "bar",
-				},
-			}
-			err := c.Delete("foo", obj)
-			require.Error(t, err)
-			require.True(t, apierrors.IsNotFound(err))
-		})
-
 		t.Run("fails if gvk doesn't exist", func(t *testing.T) {
 			obj := &cloudv1.CloudMachine{
 				ObjectMeta: metav1.ObjectMeta{
@@ -537,7 +526,7 @@ func Test_cache_client(t *testing.T) {
 			require.True(t, apierrors.IsNotFound(err))
 		})
 
-		t.Run("fails if Object doesn't exist", func(t *testing.T) {
+		t.Run("fails if object doesn't exist", func(t *testing.T) {
 			createMachine(t, c, "foo", "barz")
 
 			obj := &cloudv1.CloudMachine{
@@ -559,7 +548,7 @@ func Test_cache_client(t *testing.T) {
 			c.lock.RLock()
 			defer c.lock.RUnlock()
 
-			require.Contains(t, c.resourceGroups["foo"].objects, cloudv1.GroupVersion.WithKind(cloudv1.CloudMachineKind), "gvk must exists in object tracker for foo")
+			require.Contains(t, c.resourceGroups["foo"].objects, cloudv1.GroupVersion.WithKind(cloudv1.CloudMachineKind), "gvk must exist in object tracker for foo")
 			require.NotContains(t, c.resourceGroups["foo"].objects[cloudv1.GroupVersion.WithKind(cloudv1.CloudMachineKind)], types.NamespacedName{Name: "bar"}, "Object bar must not exist in object tracker for foo")
 
 			require.NotContains(t, h.Events(), "foo, CloudMachine=bar, Deleted")
@@ -593,7 +582,8 @@ func Test_cache_client(t *testing.T) {
 			err = c.Get("foo", types.NamespacedName{Name: "baz"}, objAfterUpdate)
 			require.NoError(t, err)
 
-			require.NotEqual(t, objBefore.GetDeletionTimestamp(), objAfterUpdate.GetDeletionTimestamp(), "deletion timestamp must be changed")
+			require.Zero(t, objBefore.GetDeletionTimestamp(), "deletion timestamp before delete must not be set")
+			require.NotZero(t, objAfterUpdate.GetDeletionTimestamp(), "deletion timestamp after delete must be set")
 			objBefore.DeletionTimestamp = objAfterUpdate.DeletionTimestamp
 			require.NotEqual(t, objBefore.GetAnnotations()[lastSyncTimeAnnotation], objAfterUpdate.GetAnnotations()[lastSyncTimeAnnotation], "last sync version must be changed")
 			objBefore.Annotations = objAfterUpdate.Annotations
@@ -651,7 +641,7 @@ func Test_cache_client(t *testing.T) {
 			c.lock.RLock()
 			defer c.lock.RUnlock()
 
-			require.Contains(t, c.resourceGroups["foo"].objects, cloudv1.GroupVersion.WithKind(cloudv1.CloudMachineKind), "gvk must exists in object tracker for foo")
+			require.Contains(t, c.resourceGroups["foo"].objects, cloudv1.GroupVersion.WithKind(cloudv1.CloudMachineKind), "gvk must exist in object tracker for foo")
 			require.NotContains(t, c.resourceGroups["foo"].objects[cloudv1.GroupVersion.WithKind(cloudv1.CloudMachineKind)], types.NamespacedName{Name: "parent3"}, "Object parent3 must not exist in object tracker for foo")
 			require.NotContains(t, c.resourceGroups["foo"].objects[cloudv1.GroupVersion.WithKind(cloudv1.CloudMachineKind)], types.NamespacedName{Name: "child3"}, "Object child3 must not exist in object tracker for foo")
 			require.NotContains(t, c.resourceGroups["foo"].objects[cloudv1.GroupVersion.WithKind(cloudv1.CloudMachineKind)], types.NamespacedName{Name: "grandchild3"}, "Object grandchild3 must not exist in object tracker for foo")

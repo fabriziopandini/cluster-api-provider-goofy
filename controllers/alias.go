@@ -35,7 +35,7 @@ import (
 // GoofyClusterReconciler reconciles a GoofyCluster object.
 type GoofyClusterReconciler struct {
 	Client       client.Client
-	CloudMgr     cloud.Manager
+	CloudManager cloud.Manager
 	APIServerMux *server.WorkloadClustersMux // TODO: find a way to use an interface here
 
 	// WatchFilterValue is the label value used to filter events prior to reconciliation.
@@ -46,7 +46,7 @@ type GoofyClusterReconciler struct {
 func (r *GoofyClusterReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager, options controller.Options) error {
 	return (&goofycontrollers.GoofyClusterReconciler{
 		Client:           r.Client,
-		CloudMgr:         r.CloudMgr,
+		CloudManager:     r.CloudManager,
 		APIServerMux:     r.APIServerMux,
 		WatchFilterValue: r.WatchFilterValue,
 	}).SetupWithManager(ctx, mgr, options)
@@ -55,7 +55,7 @@ func (r *GoofyClusterReconciler) SetupWithManager(ctx context.Context, mgr ctrl.
 // GoofyMachineReconciler reconciles a GoofyMachine object.
 type GoofyMachineReconciler struct {
 	Client       client.Client
-	CloudMgr     cloud.Manager
+	CloudManager cloud.Manager
 	APIServerMux *server.WorkloadClustersMux // TODO: find a way to use an interface here
 
 	// WatchFilterValue is the label value used to filter events prior to reconciliation.
@@ -66,7 +66,7 @@ type GoofyMachineReconciler struct {
 func (r *GoofyMachineReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager, options controller.Options) error {
 	return (&goofycontrollers.GoofyMachineReconciler{
 		Client:           r.Client,
-		CloudMgr:         r.CloudMgr,
+		CloudManager:     r.CloudManager,
 		APIServerMux:     r.APIServerMux,
 		WatchFilterValue: r.WatchFilterValue,
 	}).SetupWithManager(ctx, mgr, options)

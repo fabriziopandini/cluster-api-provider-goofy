@@ -111,7 +111,7 @@ spec:
                   type: object
                 type: array
               ready:
-                description: Ready denotes that the machine (goofy container) is ready
+                description: Ready denotes that the machine is ready
                 type: boolean
             type: object
         type: object

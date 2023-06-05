@@ -36,7 +36,7 @@ type GoofyMachineSpec struct {
 
 // GoofyMachineStatus defines the observed state of GoofyMachine.
 type GoofyMachineStatus struct {
-	// Ready denotes that the machine (goofy container) is ready
+	// Ready denotes that the machine is ready
 	// +optional
 	Ready bool `json:"ready"`
 

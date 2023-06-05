@@ -7,17 +7,14 @@
 bin
 hack/tools/bin
 
-# Test binary, built with `go test -c`
+# Test binary, build with `go test -c`
 *.test
+
+# Output of Makefile targets using sed on MacOS systems
+*.yaml-e
 
 # Output of the go coverage tool, specifically when used with LiteIDE
 *.out
-
-# Dependency directories (remove the comment below to include it)
-# vendor/
-
-# Go workspace file
-go.work
 
 # IntelliJ
 .idea/
@@ -27,14 +24,19 @@ go.work
 .vscode/
 *.code-workspace
 
+# go.work files
+go.work
+go.work.sum
+
 # Common editor / temporary files
 *~
 *.tmp
 .DS_Store
 
+# The golang vendor directory that contains local copies of external
+# dependencies that satisfy Go imports in this project.
+vendor
+
 # Used during parts of the build process. Files _should_ get cleaned up automatically.
 # This is also a good location for any temporary manfiests used during development
 tmp
-
-# Output of Makefile targets using sed on MacOS systems
-*.yaml-e

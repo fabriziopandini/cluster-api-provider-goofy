@@ -55,7 +55,7 @@ import (
 // GoofyMachineReconciler reconciles a GoofyMachine object.
 type GoofyMachineReconciler struct {
 	client.Client
-	CloudMgr     cloud.Manager
+	CloudManager cloud.Manager
 	APIServerMux *server.WorkloadClustersMux
 
 	// WatchFilterValue is the label value used to filter events prior to reconciliation.
@@ -65,10 +65,9 @@ type GoofyMachineReconciler struct {
 // +kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=goofymachines,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=goofymachines/status;goofymachines/finalizers,verbs=get;update;patch
 // +kubebuilder:rbac:groups=cluster.x-k8s.io,resources=clusters;machinesets;machines,verbs=get;list;watch
-// +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 
-// Reconcile reads that state of the cluster for a GoofyMachine object and makes changes based on the state read
-// and what is in the GoofyMachine.Spec.
+// Reconcile handles GoofyMachine events.
 func (r *GoofyMachineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Result, rerr error) {
 	log := ctrl.LoggerFrom(ctx)
 
@@ -81,7 +80,7 @@ func (r *GoofyMachineReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, err
 	}
 
-	// AddOwners adds the owners of DockerMachine as k/v pairs to the logger.
+	// AddOwners adds the owners of GoofyMachine as k/v pairs to the logger.
 	// Specifically, it will add KubeadmControlPlane, MachineSet and MachineDeployment.
 	ctx, log, err := clog.AddOwners(ctx, r.Client, goofyMachine)
 	if err != nil {
@@ -154,12 +153,12 @@ func (r *GoofyMachineReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, nil
 	}
 
-	// Handle deleted clusters
+	// Handle deleted machines
 	if !goofyMachine.DeletionTimestamp.IsZero() {
 		return r.reconcileDelete(ctx, goofyMachine)
 	}
 
-	// Handle non-deleted clusters
+	// Handle non-deleted machines
 	return r.reconcileNormal(ctx, cluster, machine, goofyMachine)
 }
 
@@ -169,7 +168,7 @@ func (r *GoofyMachineReconciler) reconcileNormal(ctx context.Context, cluster *c
 	// Compute the resource group unique name.
 	// NOTE: We are using reconcilerGroup also as a name for the listener for sake of simplicity.
 	resourceGroup := klog.KObj(cluster).String()
-	cloudClient := r.CloudMgr.GetResourceGroup(resourceGroup).GetClient()
+	cloudClient := r.CloudManager.GetResourceGroup(resourceGroup).GetClient()
 
 	// Check if the infrastructure is ready, otherwise return and wait for the cluster object to be updated
 	if !cluster.Status.InfrastructureReady {
@@ -258,12 +257,12 @@ func (r *GoofyMachineReconciler) reconcileNormal(ctx context.Context, cluster *c
 
 		keyData, exists := s.Data[secret.TLSKeyDataName]
 		if !exists {
-			return ctrl.Result{}, errors.Errorf("invalid etcd CA: missing data for %s", secret.TLSCrtDataName)
+			return ctrl.Result{}, errors.Errorf("invalid etcd CA: missing data for %s", secret.TLSKeyDataName)
 		}
 
 		key, err := certs.DecodePrivateKeyPEM(keyData)
 		if err != nil {
-			return ctrl.Result{}, errors.Wrapf(err, "invalid etcd CA: invalid %s", secret.TLSCrtDataName)
+			return ctrl.Result{}, errors.Wrapf(err, "invalid etcd CA: invalid %s", secret.TLSKeyDataName)
 		}
 
 		if err := r.APIServerMux.AddEtcdMember(resourceGroup, etcdMember, cert, key.(*rsa.PrivateKey)); err != nil {
@@ -291,16 +290,16 @@ func (r *GoofyMachineReconciler) reconcileNormal(ctx context.Context, cluster *c
 
 		keyData, exists := s.Data[secret.TLSKeyDataName]
 		if !exists {
-			return ctrl.Result{}, errors.Errorf("invalid cluster CA: missing data for %s", secret.TLSCrtDataName)
+			return ctrl.Result{}, errors.Errorf("invalid cluster CA: missing data for %s", secret.TLSKeyDataName)
 		}
 
 		key, err := certs.DecodePrivateKeyPEM(keyData)
 		if err != nil {
-			return ctrl.Result{}, errors.Wrapf(err, "invalid cluster CA: invalid %s", secret.TLSCrtDataName)
+			return ctrl.Result{}, errors.Wrapf(err, "invalid cluster CA: invalid %s", secret.TLSKeyDataName)
 		}
 
 		// Adding the APIServer.
-		// NOTE: When you add the first APIServer, the workload cluster listener is started.
+		// NOTE: When the first APIServer is added, the workload cluster listener is started.
 		if err := r.APIServerMux.AddAPIServer(resourceGroup, apiServer, cert, key.(*rsa.PrivateKey)); err != nil {
 			return ctrl.Result{}, errors.Wrap(err, "failed to start API server")
 		}
@@ -420,7 +419,7 @@ func (r *GoofyMachineReconciler) reconcileNormal(ctx context.Context, cluster *c
 	role := &rbacv1.ClusterRole{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "kubeadm:get-nodes",
-			// Namespace: metav1.NamespaceSystem, // TODO: drop in kubeadm?
+			// Namespace: metav1.NamespaceSystem, // TODO: drop in kubeadm? Yup!
 		},
 		Rules: []rbacv1.PolicyRule{
 			{
@@ -431,13 +430,13 @@ func (r *GoofyMachineReconciler) reconcileNormal(ctx context.Context, cluster *c
 		},
 	}
 	if err := cloudClient.Create(ctx, role); err != nil && !apierrors.IsAlreadyExists(err) {
-		return ctrl.Result{}, errors.Wrapf(err, "failed to create ClusterRole")
+		return ctrl.Result{}, errors.Wrapf(err, "failed to create kubeadm:get-nodes ClusterRole")
 	}
 
 	roleBinding := &rbacv1.ClusterRoleBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "kubeadm:get-nodes",
-			// Namespace: metav1.NamespaceSystem, // TODO: drop in kubeadm?
+			// Namespace: metav1.NamespaceSystem, // TODO: drop in kubeadm? Yup!
 		},
 		RoleRef: rbacv1.RoleRef{
 			APIGroup: rbacv1.GroupName,
@@ -452,7 +451,7 @@ func (r *GoofyMachineReconciler) reconcileNormal(ctx context.Context, cluster *c
 		},
 	}
 	if err := cloudClient.Create(ctx, roleBinding); err != nil && !apierrors.IsAlreadyExists(err) {
-		return ctrl.Result{}, errors.Wrapf(err, "failed to create ClusterRoleBinding")
+		return ctrl.Result{}, errors.Wrapf(err, "failed to create kubeadm:get-nodes ClusterRoleBinding")
 	}
 
 	// create kubeadm config map
@@ -463,7 +462,7 @@ func (r *GoofyMachineReconciler) reconcileNormal(ctx context.Context, cluster *c
 		},
 	}
 	if err := cloudClient.Create(ctx, cm); err != nil && !apierrors.IsAlreadyExists(err) {
-		return ctrl.Result{}, errors.Wrapf(err, "failed to create ConfigMap")
+		return ctrl.Result{}, errors.Wrapf(err, "failed to create ubeadm-config ConfigMap")
 	}
 
 	return ctrl.Result{}, nil
@@ -501,15 +500,15 @@ func (r *GoofyMachineReconciler) SetupWithManager(ctx context.Context, mgr ctrl.
 			builder.WithPredicates(
 				predicates.ClusterUnpausedAndInfrastructureReady(ctrl.LoggerFrom(ctx)),
 			),
-		).
-		Complete(r)
-
+		).Complete(r)
 	if err != nil {
 		return errors.Wrap(err, "failed setting up with a controller manager")
 	}
 	return nil
 }
 
+// GoofyClusterToGoofyMachines is a handler.ToRequestsFunc to be used to enqueue
+// requests for reconciliation of GoofyMachines.
 func (r *GoofyMachineReconciler) GoofyClusterToGoofyMachines(ctx context.Context, o client.Object) []ctrl.Request {
 	result := []ctrl.Request{}
 	c, ok := o.(*infrav1.GoofyCluster)

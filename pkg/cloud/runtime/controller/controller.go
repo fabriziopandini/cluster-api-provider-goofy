@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -43,6 +44,7 @@ type Controller interface {
 	Start(ctx context.Context) error
 }
 
+// New returns a new Controller.
 func New(name string, options Options) (Controller, error) {
 	if name == "" {
 		return nil, fmt.Errorf("name cannot be empty")
@@ -85,6 +87,7 @@ type watchDescription struct {
 	predicates []cpredicate.Predicate
 }
 
+// Watch implements Controller.
 func (c *controller) Watch(src csource.Source, evthdler chandler.EventHandler, prct ...cpredicate.Predicate) error {
 	c.lock.Lock()
 	defer c.lock.Unlock()
@@ -99,6 +102,7 @@ func (c *controller) Watch(src csource.Source, evthdler chandler.EventHandler, p
 	return src.Start(c.ctx, evthdler, c.queue, prct...)
 }
 
+// Start implements Controller.
 func (c *controller) Start(ctx context.Context) error {
 	if ctx == nil {
 		return fmt.Errorf("context cannot be nil")
@@ -131,14 +135,14 @@ func (c *controller) Start(ctx context.Context) error {
 
 	c.startWatches = nil
 
-	workers := 0
+	var workers int64
 	go func() {
 		log.Info("Starting reconcile workers", "count", c.concurrency)
 		wg := &sync.WaitGroup{}
 		wg.Add(c.concurrency)
 		for i := 0; i < c.concurrency; i++ {
 			go func() {
-				workers++
+				atomic.AddInt64(&workers, 1)
 				defer wg.Done()
 				for c.processNextWorkItem(ctx) { //nolint:revive
 				}
@@ -150,7 +154,7 @@ func (c *controller) Start(ctx context.Context) error {
 	}()
 
 	if err := wait.PollUntilContextTimeout(ctx, 50*time.Millisecond, 5*time.Second, false, func(ctx context.Context) (done bool, err error) {
-		if workers < c.concurrency {
+		if atomic.LoadInt64(&workers) < int64(c.concurrency) {
 			return false, nil
 		}
 		return true, nil
@@ -180,7 +184,7 @@ func (c *controller) reconcileHandler(ctx context.Context, obj interface{}) {
 		return
 	}
 
-	// TODO: Inject logger
+	// TODO: Inject logger + add log on error
 
 	result, err := c.reconciler.Reconcile(ctx, req)
 	switch {

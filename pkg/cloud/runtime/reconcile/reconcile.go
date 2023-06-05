@@ -42,7 +42,7 @@ func (r Request) String() string {
 	if r.ResourceGroup == "" {
 		return r.NamespacedName.String()
 	}
-	return "%s://" + r.ResourceGroup + string(types.Separator) + r.NamespacedName.String()
+	return r.ResourceGroup + string(types.Separator) + r.NamespacedName.String()
 }
 
 // Result contains the result of a Reconciler invocation.

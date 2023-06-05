@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -46,14 +47,14 @@ func (c *cache) startGarbageCollector(ctx context.Context) error {
 		c.garbageCollectorQueue.ShutDown()
 	}()
 
-	workers := 0
+	var workers int64
 	go func() {
 		log.Info("Starting garbage collector workers", "count", c.garbageCollectorConcurrency)
 		wg := &sync.WaitGroup{}
 		wg.Add(c.garbageCollectorConcurrency)
 		for i := 0; i < c.garbageCollectorConcurrency; i++ {
 			go func() {
-				workers++
+				atomic.AddInt64(&workers, 1)
 				defer wg.Done()
 				for c.processGarbageCollectorWorkItem(ctx) { //nolint:revive
 				}
@@ -64,7 +65,7 @@ func (c *cache) startGarbageCollector(ctx context.Context) error {
 	}()
 
 	if err := wait.PollUntilContextTimeout(ctx, 50*time.Millisecond, 5*time.Second, false, func(ctx context.Context) (done bool, err error) {
-		if workers < c.garbageCollectorConcurrency {
+		if atomic.LoadInt64(&workers) < int64(c.garbageCollectorConcurrency) {
 			return false, nil
 		}
 		return true, nil

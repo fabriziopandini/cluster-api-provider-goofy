@@ -33,20 +33,20 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-func (c *cache) Get(resourceGroup string, key client.ObjectKey, obj client.Object) error {
+func (c *cache) Get(resourceGroup string, objKey client.ObjectKey, obj client.Object) error {
 	if resourceGroup == "" {
 		return apierrors.NewBadRequest("resourceGroup must not be empty")
 	}
 
-	if key.Name == "" {
-		return apierrors.NewBadRequest("key.Name must not be empty")
+	if objKey.Name == "" {
+		return apierrors.NewBadRequest("objKey.Name must not be empty")
 	}
 
 	if obj == nil {
 		return apierrors.NewBadRequest("object must not be nil")
 	}
 
-	gvk, err := c.gvkGetAndSet(obj)
+	objGVK, err := c.gvkGetAndSet(obj)
 	if err != nil {
 		return err
 	}
@@ -59,14 +59,14 @@ func (c *cache) Get(resourceGroup string, key client.ObjectKey, obj client.Objec
 	tracker.lock.RLock()
 	defer tracker.lock.RUnlock()
 
-	objects, ok := tracker.objects[gvk]
+	objects, ok := tracker.objects[objGVK]
 	if !ok {
-		return apierrors.NewNotFound(unsafeGuessGroupVersionResource(gvk).GroupResource(), key.String())
+		return apierrors.NewNotFound(unsafeGuessGroupVersionResource(objGVK).GroupResource(), objKey.String())
 	}
 
-	trackedObj, ok := objects[key]
+	trackedObj, ok := objects[objKey]
 	if !ok {
-		return apierrors.NewNotFound(unsafeGuessGroupVersionResource(gvk).GroupResource(), key.String())
+		return apierrors.NewNotFound(unsafeGuessGroupVersionResource(objGVK).GroupResource(), objKey.String())
 	}
 
 	if err := c.scheme.Convert(trackedObj, obj, nil); err != nil {
@@ -154,7 +154,7 @@ func (c *cache) store(resourceGroup string, obj client.Object, replaceExisting b
 		return apierrors.NewBadRequest("object must not be nil")
 	}
 
-	gvk, err := c.gvkGetAndSet(obj)
+	objGVK, err := c.gvkGetAndSet(obj)
 	if err != nil {
 		return err
 	}
@@ -171,6 +171,7 @@ func (c *cache) store(resourceGroup string, obj client.Object, replaceExisting b
 	tracker.lock.Lock()
 	defer tracker.lock.Unlock()
 
+	// Note: This just validates that all owners exist in tracker.
 	for _, o := range obj.GetOwnerReferences() {
 		oRef, err := newOwnReferenceFromOwnerReference(obj.GetNamespace(), o)
 		if err != nil {
@@ -178,64 +179,66 @@ func (c *cache) store(resourceGroup string, obj client.Object, replaceExisting b
 		}
 		objects, ok := tracker.objects[oRef.gvk]
 		if !ok {
-			return apierrors.NewBadRequest(fmt.Sprintf("ownerReference %s, Name=%s does not exist", oRef.gvk, oRef.key.Name))
+			return apierrors.NewBadRequest(fmt.Sprintf("ownerReference %s, Name=%s does not exist (GVK not tracked)", oRef.gvk, oRef.key.Name))
 		}
 		if _, ok := objects[oRef.key]; !ok {
 			return apierrors.NewBadRequest(fmt.Sprintf("ownerReference %s, Name=%s does not exist", oRef.gvk, oRef.key.Name))
 		}
 	}
 
-	_, ok := tracker.objects[gvk]
+	_, ok := tracker.objects[objGVK]
 	if !ok {
-		tracker.objects[gvk] = make(map[types.NamespacedName]client.Object)
+		tracker.objects[objGVK] = make(map[types.NamespacedName]client.Object)
 	}
 
 	// TODO: if unstructured, convert to typed object
 
-	key := client.ObjectKeyFromObject(obj)
-	objRef := ownReference{gvk: gvk, key: key}
-	if trackedObj, ok := tracker.objects[gvk][key]; ok {
+	objKey := client.ObjectKeyFromObject(obj)
+	objRef := ownReference{gvk: objGVK, key: objKey}
+	if trackedObj, ok := tracker.objects[objGVK][objKey]; ok {
 		if replaceExisting {
 			if trackedObj.GetResourceVersion() != obj.GetResourceVersion() {
-				return apierrors.NewConflict(unsafeGuessGroupVersionResource(gvk).GroupResource(), key.String(), fmt.Errorf("object has been modified"))
+				return apierrors.NewConflict(unsafeGuessGroupVersionResource(objGVK).GroupResource(), objKey.String(), fmt.Errorf("object has been modified"))
 			}
 
 			if err := c.beforeUpdate(resourceGroup, trackedObj, obj); err != nil {
 				return err
 			}
-			tracker.objects[gvk][key] = obj.DeepCopyObject().(client.Object)
+			tracker.objects[objGVK][objKey] = obj.DeepCopyObject().(client.Object)
 			updateTrackerOwnerReferences(tracker, trackedObj, obj, objRef)
 			c.afterUpdate(resourceGroup, trackedObj, obj)
 			return nil
 		}
-		return apierrors.NewAlreadyExists(unsafeGuessGroupVersionResource(gvk).GroupResource(), key.String())
+		return apierrors.NewAlreadyExists(unsafeGuessGroupVersionResource(objGVK).GroupResource(), objKey.String())
 	}
 
 	if replaceExisting {
-		return apierrors.NewNotFound(unsafeGuessGroupVersionResource(gvk).GroupResource(), key.String())
+		return apierrors.NewNotFound(unsafeGuessGroupVersionResource(objGVK).GroupResource(), objKey.String())
 	}
 
 	if err := c.beforeCreate(resourceGroup, obj); err != nil {
 		return err
 	}
-	tracker.objects[gvk][key] = obj.DeepCopyObject().(client.Object)
+	tracker.objects[objGVK][objKey] = obj.DeepCopyObject().(client.Object)
 	updateTrackerOwnerReferences(tracker, nil, obj, objRef)
 	c.afterCreate(resourceGroup, obj)
 	return nil
 }
 
-func updateTrackerOwnerReferences(tracker *resourceGroupTracker, oldObj client.Object, newObj client.Object, objRef ownReference) {
+func updateTrackerOwnerReferences(tracker *resourceGroupTracker, oldObj, newObj client.Object, objRef ownReference) {
 	if oldObj != nil {
-		for _, oldO := range oldObj.GetOwnerReferences() {
-			found := false
-			for _, newO := range newObj.GetOwnerReferences() {
-				if oldO == newO {
-					found = true
+		for _, oldOwnerRef := range oldObj.GetOwnerReferences() {
+			ownerRefStillExists := false
+			for _, newOwnerRef := range newObj.GetOwnerReferences() {
+				if oldOwnerRef == newOwnerRef {
+					ownerRefStillExists = true
 					break
 				}
 			}
-			if !found {
-				oldRef, _ := newOwnReferenceFromOwnerReference(newObj.GetNamespace(), oldO)
+
+			if !ownerRefStillExists {
+				// Remove ownerRef from tracker (if necessary) as it has been removed from object.
+				oldRef, _ := newOwnReferenceFromOwnerReference(newObj.GetNamespace(), oldOwnerRef)
 				if _, ok := tracker.ownedObjects[*oldRef]; !ok {
 					continue
 				}
@@ -246,18 +249,20 @@ func updateTrackerOwnerReferences(tracker *resourceGroupTracker, oldObj client.O
 			}
 		}
 	}
-	for _, newO := range newObj.GetOwnerReferences() {
-		found := false
+	for _, newOwnerRef := range newObj.GetOwnerReferences() {
+		ownerRefAlreadyExisted := false
 		if oldObj != nil {
-			for _, oldO := range oldObj.GetOwnerReferences() {
-				if newO == oldO {
-					found = true
+			for _, oldOwnerRef := range oldObj.GetOwnerReferences() {
+				if newOwnerRef == oldOwnerRef {
+					ownerRefAlreadyExisted = true
 					break
 				}
 			}
 		}
-		if !found {
-			newRef, _ := newOwnReferenceFromOwnerReference(newObj.GetNamespace(), newO)
+
+		if !ownerRefAlreadyExisted {
+			// Add new ownerRef to tracker.
+			newRef, _ := newOwnReferenceFromOwnerReference(newObj.GetNamespace(), newOwnerRef)
 			if _, ok := tracker.ownedObjects[*newRef]; !ok {
 				tracker.ownedObjects[*newRef] = map[ownReference]struct{}{}
 			}
@@ -301,7 +306,7 @@ func (c *cache) Patch(resourceGroup string, obj client.Object, patch client.Patc
 			return apierrors.NewInternalError(err)
 		}
 	default:
-		return apierrors.NewBadRequest(fmt.Sprintf("path of type %s are not supported", patch.Type()))
+		return apierrors.NewBadRequest(fmt.Sprintf("patch of type %s is not supported", patch.Type()))
 	}
 
 	codecFactory := serializer.NewCodecFactory(c.scheme)
@@ -338,23 +343,23 @@ func (c *cache) Delete(resourceGroup string, obj client.Object) error {
 		return apierrors.NewBadRequest("object name must not be empty")
 	}
 
-	gvk, err := c.gvkGetAndSet(obj)
+	objGVK, err := c.gvkGetAndSet(obj)
 	if err != nil {
 		return err
 	}
 
 	obj = obj.DeepCopyObject().(client.Object)
 
-	key := client.ObjectKeyFromObject(obj)
-	deleted, err := c.tryDelete(resourceGroup, gvk, key)
+	objKey := client.ObjectKeyFromObject(obj)
+	deleted, err := c.tryDelete(resourceGroup, objGVK, objKey)
 	if err != nil {
 		return err
 	}
 	if !deleted {
 		c.garbageCollectorQueue.Add(gcRequest{
 			resourceGroup: resourceGroup,
-			gvk:           gvk,
-			key:           key,
+			gvk:           objGVK,
+			key:           objKey,
 		})
 	}
 	return nil
@@ -369,23 +374,27 @@ func (c *cache) tryDelete(resourceGroup string, gvk schema.GroupVersionKind, key
 	tracker.lock.Lock()
 	defer tracker.lock.Unlock()
 
-	return c.doTryDelete(resourceGroup, tracker, gvk, key)
+	return c.doTryDeleteLocked(resourceGroup, tracker, gvk, key)
 }
 
-func (c *cache) doTryDelete(resourceGroup string, tracker *resourceGroupTracker, gvk schema.GroupVersionKind, key types.NamespacedName) (bool, error) {
-	objects, ok := tracker.objects[gvk]
+// doTryDeleteLocked tries to delete an objects.
+// Note: The tracker must bve already locked when calling this method.
+func (c *cache) doTryDeleteLocked(resourceGroup string, tracker *resourceGroupTracker, objGVK schema.GroupVersionKind, objKey types.NamespacedName) (bool, error) {
+	objects, ok := tracker.objects[objGVK]
 	if !ok {
-		return true, apierrors.NewNotFound(unsafeGuessGroupVersionResource(gvk).GroupResource(), key.String())
+		return true, apierrors.NewNotFound(unsafeGuessGroupVersionResource(objGVK).GroupResource(), objKey.String())
 	}
 
-	obj, ok := tracker.objects[gvk][key]
+	obj, ok := tracker.objects[objGVK][objKey]
 	if !ok {
-		return true, apierrors.NewNotFound(unsafeGuessGroupVersionResource(gvk).GroupResource(), key.String())
+		return true, apierrors.NewNotFound(unsafeGuessGroupVersionResource(objGVK).GroupResource(), objKey.String())
 	}
 
-	if ownedReferences, ok := tracker.ownedObjects[ownReference{gvk: gvk, key: key}]; ok {
+	// Loop through objects that are owned by obj and try to delete them.
+	// TODO: Consider only deleting the hierarchy if the obj doesn't have any finalizers.
+	if ownedReferences, ok := tracker.ownedObjects[ownReference{gvk: objGVK, key: objKey}]; ok {
 		for ref := range ownedReferences {
-			deleted, err := c.doTryDelete(resourceGroup, tracker, ref.gvk, ref.key)
+			deleted, err := c.doTryDeleteLocked(resourceGroup, tracker, ref.gvk, ref.key)
 			if err != nil {
 				return false, err
 			}
@@ -397,9 +406,10 @@ func (c *cache) doTryDelete(resourceGroup string, tracker *resourceGroupTracker,
 				})
 			}
 		}
-		delete(tracker.ownedObjects, ownReference{gvk: gvk, key: key})
+		delete(tracker.ownedObjects, ownReference{gvk: objGVK, key: objKey})
 	}
 
+	// If the object still has finalizers, only set the deletion timestamp if not already set.
 	if len(obj.GetFinalizers()) > 0 {
 		if !obj.GetDeletionTimestamp().IsZero() {
 			return false, nil
@@ -418,13 +428,16 @@ func (c *cache) doTryDelete(resourceGroup string, tracker *resourceGroupTracker,
 		// that prevent changes to automatically managed fields.
 		obj.SetDeletionTimestamp(&now)
 
-		objects[key] = obj
+		objects[objKey] = obj
 		c.afterUpdate(resourceGroup, oldObj, obj)
 
 		return false, nil
 	}
 
-	delete(objects, key)
+	// Object doesn't have finalizers, delete it.
+	// Note: we don't call informDelete here because we couldn't reconcile it
+	// because the object is already gone from the tracker.
+	delete(objects, objKey)
 	c.afterDelete(resourceGroup, obj)
 	return true, nil
 }

@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -63,14 +64,14 @@ func (c *cache) startSyncer(ctx context.Context) error {
 		}
 	}()
 
-	workers := 0
+	var workers int64
 	go func() {
 		log.Info("Starting sync workers", "count", c.syncConcurrency)
 		wg := &sync.WaitGroup{}
 		wg.Add(c.syncConcurrency)
 		for i := 0; i < c.syncConcurrency; i++ {
 			go func() {
-				workers++
+				atomic.AddInt64(&workers, 1)
 				defer wg.Done()
 				for c.processSyncWorkItem(ctx) { //nolint:revive
 				}
@@ -90,7 +91,7 @@ func (c *cache) startSyncer(ctx context.Context) error {
 	}
 
 	if err := wait.PollUntilContextTimeout(ctx, 50*time.Millisecond, 5*time.Second, false, func(ctx context.Context) (done bool, err error) {
-		if workers < c.syncConcurrency {
+		if atomic.LoadInt64(&workers) < int64(c.syncConcurrency) {
 			return false, nil
 		}
 		return true, nil
@@ -127,8 +128,8 @@ func (c *cache) syncResourceGroupTracker(_ context.Context, resourceGroup string
 			}
 			i++
 			c.syncQueue.Add(resyncRequest{
-				gvk:           gvk,
 				resourceGroup: resourceGroup,
+				gvk:           gvk,
 				key:           key,
 			})
 		}

@@ -7,4 +7,3 @@ spec:
   ports:
     - port: 443
       targetPort: webhook-server
-

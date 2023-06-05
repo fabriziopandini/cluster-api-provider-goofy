@@ -17,7 +17,7 @@ limitations under the License.
 /*
 Package cache defines resource group aware Cache.
 
-The Cache implements sync loop and garbage collector inspired from to ones existing
+The Cache implements sync loop and garbage collector inspired from the ones existing
 in Kubernetes, but in this case only finalizers are respected while currently there is not
 a concept of ownerReferences.
 

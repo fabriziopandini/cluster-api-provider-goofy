@@ -42,10 +42,7 @@ func Test_cache_sync(t *testing.T) {
 
 	err = c.Start(ctx)
 	require.NoError(t, err)
-
-	require.Eventually(t, func() bool {
-		return c.started
-	}, 5*time.Second, 200*time.Millisecond, "manager should start")
+	require.True(t, c.started)
 
 	c.AddResourceGroup("foo")
 

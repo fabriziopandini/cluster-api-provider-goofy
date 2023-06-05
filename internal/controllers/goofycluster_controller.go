@@ -43,14 +43,14 @@ import (
 // GoofyClusterReconciler reconciles a GoofyCluster object.
 type GoofyClusterReconciler struct {
 	client.Client
-	CloudMgr     cloud.Manager
+	CloudManager cloud.Manager
 	APIServerMux *server.WorkloadClustersMux
 
 	// WatchFilterValue is the label value used to filter events prior to reconciliation.
 	WatchFilterValue string
 
-	hostRestartDone bool
-	hostRestartLock sync.RWMutex
+	hotRestartDone bool
+	hotRestartLock sync.RWMutex
 }
 
 // +kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=goofyclusters,verbs=get;list;watch;create;update;patch;delete
@@ -124,41 +124,46 @@ func (r *GoofyClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 // reconcileHotRestart tries to setup the APIServerMux according to an existing sets of GoofyCluster.
 // NOTE: This is done at best effort in order to make iterative development workflow easier.
 func (r *GoofyClusterReconciler) reconcileHotRestart(ctx context.Context) (ctrl.Result, error) {
-	if !r.isHotRestart() {
+	r.hotRestartLock.RLock()
+	if r.hotRestartDone {
+		// Return if the hot restart was already done.
+		r.hotRestartLock.RUnlock()
 		return ctrl.Result{}, nil
 	}
+	r.hotRestartLock.RUnlock()
 
-	r.hostRestartLock.Lock()
-	defer r.hostRestartLock.Unlock()
+	r.hotRestartLock.Lock()
+	defer r.hotRestartLock.Unlock()
+
+	// Check again if another go routine did the hot restart before we got the write lock.
+	if r.hotRestartDone {
+		return ctrl.Result{}, nil
+	}
 
 	goofyClusterList := &infrav1.GoofyClusterList{}
 	if err := r.Client.List(ctx, goofyClusterList); err != nil {
 		return ctrl.Result{}, err
 	}
-	r.APIServerMux.HotRestart(goofyClusterList)
+	if err := r.APIServerMux.HotRestart(goofyClusterList); err != nil {
+		return ctrl.Result{}, err
+	}
 
-	r.hostRestartDone = true
+	r.hotRestartDone = true
 	return ctrl.Result{}, nil
-}
-
-func (r *GoofyClusterReconciler) isHotRestart() bool {
-	r.hostRestartLock.RLock()
-	defer r.hostRestartLock.RUnlock()
-	return !r.hostRestartDone
 }
 
 func (r *GoofyClusterReconciler) reconcileNormal(_ context.Context, cluster *clusterv1.Cluster, goofyCluster *infrav1.GoofyCluster) (ctrl.Result, error) {
 	// Compute the resource group unique name.
 	resourceGroup := klog.KObj(cluster).String()
 
-	// Stores the resource group used by this goofyCluster.
+	// Store the resource group used by this goofyCluster.
 	goofyCluster.Annotations[infrav1.ResourceGroupAnnotationName] = resourceGroup
 
 	// Create a resource group for all the cloud resources belonging the workload cluster;
 	// if the resource group already exists, the operation is a no-op.
 	// NOTE: We are storing in this resource group both the cloud resources (e.g. VM) as
 	// well as Kubernetes resources that are expected to exist on the workload cluster (e.g Nodes).
-	r.CloudMgr.AddResourceGroup(resourceGroup)
+	r.CloudManager.AddResourceGroup(resourceGroup)
 
 	// Initialize a listener for the workload cluster; if the listener has been already initialized
 	// the operation is a no-op.
@@ -176,7 +181,7 @@ func (r *GoofyClusterReconciler) reconcileNormal(_ context.Context, cluster *clu
 		goofyCluster.Spec.ControlPlaneEndpoint.Port = listener.Port()
 	}
 
-	// Mark the dockerCluster ready
+	// Mark the GoofyCluster ready
 	goofyCluster.Status.Ready = true
 
 	return ctrl.Result{}, nil

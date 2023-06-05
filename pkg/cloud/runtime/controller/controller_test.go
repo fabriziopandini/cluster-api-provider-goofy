@@ -64,8 +64,7 @@ func TestController_Queue(t *testing.T) {
 
 	i := &fakeInformer{}
 
-	err = c.Watch(&csource.Kind{
-		Type:     &cloudv1.CloudMachine{},
+	err = c.Watch(&csource.Informer{
 		Informer: i,
 	}, &chandler.EnqueueRequestForObject{})
 	require.NoError(t, err)
