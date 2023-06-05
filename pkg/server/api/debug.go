@@ -26,10 +26,10 @@ import (
 	cmanager "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/manager"
 )
 
-// DebugInfoProvider defines the list of method the server must implement
+// DebugInfoProvider defines the methods the server must implement
 // to provide debug info.
 type DebugInfoProvider interface {
-	ListProviders() map[string]string
+	ListListeners() map[string]string
 }
 
 // NewDebugHandler returns an http.Handler for debugging the server.
@@ -64,9 +64,9 @@ func (h *debugHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *debugHandler) listenersList(_ *restful.Request, resp *restful.Response) {
-	providers := h.infoProvider.ListProviders()
+	listeners := h.infoProvider.ListListeners()
 
-	if err := resp.WriteEntity(providers); err != nil {
+	if err := resp.WriteEntity(listeners); err != nil {
 		_ = resp.WriteErrorString(http.StatusInternalServerError, err.Error())
 		return
 	}

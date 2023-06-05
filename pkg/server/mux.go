@@ -402,7 +402,7 @@ func (m *WorkloadClustersMux) HasEtcdMember(wclName, podName string) bool {
 }
 
 // ListProviders implements api.DebugInfoProvider.
-func (m *WorkloadClustersMux) ListProviders() map[string]string {
+func (m *WorkloadClustersMux) ListListeners() map[string]string {
 	m.lock.RLock()
 	defer m.lock.RUnlock()
 

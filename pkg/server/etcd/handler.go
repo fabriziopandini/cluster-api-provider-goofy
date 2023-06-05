@@ -38,7 +38,7 @@ import (
 )
 
 // ResourceGroupResolver defines a func that can identify which workloadCluster/resourceGroup a
-// request targets to.
+// request targets.
 type ResourceGroupResolver func(host string) (string, error)
 
 // NewEtcdServerHandler returns an http.Handler for fake etcd members.
@@ -167,13 +167,14 @@ func (b *baseServer) getResourceGroupAndMember(ctx context.Context) (resourceGro
 	localAddr := ctx.Value(http.LocalAddrContextKey)
 	resourceGroup, err = b.resourceGroupResolver(fmt.Sprintf("%s", localAddr))
 	if err != nil {
-		return
+		return "", "", err
 	}
 
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
-		return resourceGroup, "", errors.Errorf("failed to get metadata when processing request to etcd in resourceGroup %s", resourceGroup)
+		return "", "", errors.Errorf("failed to get metadata when processing request to etcd in resourceGroup %s", resourceGroup)
 	}
+	// Calculate the etcd member name by trimming the "etcd-" prefix from ":authority" metadata.
 	etcdMember = strings.TrimPrefix(strings.Join(md.Get(":authority"), ","), "etcd-")
 	return
 }

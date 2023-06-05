@@ -44,10 +44,10 @@ import (
 )
 
 // ResourceGroupResolver defines a func that can identify which workloadCluster/resourceGroup a
-// request targets to.
+// request targets.
 type ResourceGroupResolver func(host string) (string, error)
 
-// NewAPIServerHandler returns an http.Handler for fake API server.
+// NewAPIServerHandler returns an http.Handler for a fake API server.
 func NewAPIServerHandler(manager cmanager.Manager, log logr.Logger, resolver ResourceGroupResolver) http.Handler {
 	apiServer := &apiServerHandler{
 		container:             restful.NewContainer(),
@@ -94,7 +94,7 @@ func NewAPIServerHandler(manager cmanager.Manager, log logr.Logger, resolver Res
 	ws.Route(ws.PATCH("/api/v1/namespaces/{namespace}/{resource}/{name}").Consumes(string(types.MergePatchType), string(types.StrategicMergePatchType)).To(apiServer.apiV1Patch))
 	ws.Route(ws.DELETE("/api/v1/namespaces/{namespace}/{resource}/{name}").Consumes(runtime.ContentTypeProtobuf).To(apiServer.apiV1Delete))
 
-	ws.Route(ws.POST("/apis/{group}/{version}/{resource}").Consumes(runtime.ContentTypeProtobuf).To(apiServer.apiV1Create))
+	ws.Route(ws.POST("/apis/{group}/{version}/namespaces/{namespace}/{resource}").Consumes(runtime.ContentTypeProtobuf).To(apiServer.apiV1Create))
 	ws.Route(ws.GET("/apis/{group}/{version}/namespaces/{namespace}/{resource}").To(apiServer.apiV1List))
 	ws.Route(ws.GET("/apis/{group}/{version}/namespaces/{namespace}/{resource}/{name}").To(apiServer.apiV1Get))
 	ws.Route(ws.PUT("/apis/{group}/{version}/namespaces/{namespace}/{resource}/{name}").Consumes(runtime.ContentTypeProtobuf).To(apiServer.apiV1Update))
@@ -143,7 +143,7 @@ func (h *apiServerHandler) apiV1Discovery(_ *restful.Request, resp *restful.Resp
 func (h *apiServerHandler) apisDiscovery(req *restful.Request, resp *restful.Response) {
 	if req.PathParameter("group") != "" {
 		if req.PathParameter("group") == "rbac.authorization.k8s.io" && req.PathParameter("version") == "v1" {
-			if err := resp.WriteEntity(rbav1APIResourceList); err != nil {
+			if err := resp.WriteEntity(rbacv1APIResourceList); err != nil {
 				_ = resp.WriteErrorString(http.StatusInternalServerError, err.Error())
 				return
 			}
@@ -162,7 +162,7 @@ func (h *apiServerHandler) apisDiscovery(req *restful.Request, resp *restful.Res
 func (h *apiServerHandler) apiV1Create(req *restful.Request, resp *restful.Response) {
 	ctx := req.Request.Context()
 
-	// Gets the resource group the request targets to (the resolver is aware of the mapping host<->resourceGroup)
+	// Gets the resource group the request targets (the resolver is aware of the mapping host<->resourceGroup)
 	resourceGroup, err := h.resourceGroupResolver(req.Request.Host)
 	if err != nil {
 		_ = resp.WriteErrorString(http.StatusInternalServerError, err.Error())
@@ -181,6 +181,7 @@ func (h *apiServerHandler) apiV1Create(req *restful.Request, resp *restful.Respo
 
 	// Gets the obj from the request.
 	defer func() { _ = req.Request.Body.Close() }()
+	// TODO: should we really ignore this error?
 	objData, _ := io.ReadAll(req.Request.Body)
 
 	newObj, err := h.manager.GetScheme().New(*gvk)
@@ -212,7 +213,7 @@ func (h *apiServerHandler) apiV1Create(req *restful.Request, resp *restful.Respo
 func (h *apiServerHandler) apiV1List(req *restful.Request, resp *restful.Response) {
 	ctx := req.Request.Context()
 
-	// Gets the resource group the request targets to (the resolver is aware of the mapping host<->resourceGroup)
+	// Gets the resource group the request targets (the resolver is aware of the mapping host<->resourceGroup)
 	resourceGroup, err := h.resourceGroupResolver(req.Request.Host)
 	if err != nil {
 		_ = resp.WriteErrorString(http.StatusInternalServerError, err.Error())
@@ -252,7 +253,7 @@ func (h *apiServerHandler) apiV1List(req *restful.Request, resp *restful.Respons
 func (h *apiServerHandler) apiV1Get(req *restful.Request, resp *restful.Response) {
 	ctx := req.Request.Context()
 
-	// Gets the resource group the request targets to (the resolver is aware of the mapping host<->resourceGroup)
+	// Gets the resource group the request targets (the resolver is aware of the mapping host<->resourceGroup)
 	resourceGroup, err := h.resourceGroupResolver(req.Request.Host)
 	if err != nil {
 		_ = resp.WriteErrorString(http.StatusInternalServerError, err.Error())
@@ -293,7 +294,7 @@ func (h *apiServerHandler) apiV1Get(req *restful.Request, resp *restful.Response
 func (h *apiServerHandler) apiV1Update(req *restful.Request, resp *restful.Response) {
 	ctx := req.Request.Context()
 
-	// Gets the resource group the request targets to (the resolver is aware of the mapping host<->resourceGroup)
+	// Gets the resource group the request targets (the resolver is aware of the mapping host<->resourceGroup)
 	resourceGroup, err := h.resourceGroupResolver(req.Request.Host)
 	if err != nil {
 		_ = resp.WriteErrorString(http.StatusInternalServerError, err.Error())
@@ -312,6 +313,7 @@ func (h *apiServerHandler) apiV1Update(req *restful.Request, resp *restful.Respo
 
 	// Gets the obj from the request.
 	defer func() { _ = req.Request.Body.Close() }()
+	// TODO: should we really ignore this error?
 	objData, _ := io.ReadAll(req.Request.Body)
 
 	newObj, err := h.manager.GetScheme().New(*gvk)
@@ -326,7 +328,7 @@ func (h *apiServerHandler) apiV1Update(req *restful.Request, resp *restful.Respo
 		return
 	}
 
-	// Create the object
+	// Update the object
 	obj := newObj.(client.Object)
 	// TODO: consider check vs enforce for namespace on the object - namespace on the request path
 	obj.SetNamespace(req.PathParameter("namespace"))
@@ -343,7 +345,7 @@ func (h *apiServerHandler) apiV1Update(req *restful.Request, resp *restful.Respo
 func (h *apiServerHandler) apiV1Patch(req *restful.Request, resp *restful.Response) {
 	ctx := req.Request.Context()
 
-	// Gets the resource group the request targets to (the resolver is aware of the mapping host<->resourceGroup)
+	// Gets the resource group the request targets (the resolver is aware of the mapping host<->resourceGroup)
 	resourceGroup, err := h.resourceGroupResolver(req.Request.Host)
 	if err != nil {
 		_ = resp.WriteErrorString(http.StatusInternalServerError, err.Error())
@@ -362,11 +364,12 @@ func (h *apiServerHandler) apiV1Patch(req *restful.Request, resp *restful.Respon
 
 	// Gets the patch from the request
 	defer func() { _ = req.Request.Body.Close() }()
+	// TODO: should we really ignore this error?
 	patchData, _ := io.ReadAll(req.Request.Body)
 	patchType := types.PatchType(req.HeaderParameter("Content-Type"))
 	patch := client.RawPatch(patchType, patchData)
 
-	// Applies the Patch.
+	// Apply the Patch.
 	obj := &unstructured.Unstructured{}
 	// TODO: consider check vs enforce for gvk on the object - gvk on the request path (same for name/namespace)
 	obj.SetAPIVersion(gvk.GroupVersion().String())
@@ -387,7 +390,7 @@ func (h *apiServerHandler) apiV1Patch(req *restful.Request, resp *restful.Respon
 func (h *apiServerHandler) apiV1Delete(req *restful.Request, resp *restful.Response) {
 	ctx := req.Request.Context()
 
-	// Gets the resource group the request targets to (the resolver is aware of the mapping host<->resourceGroup)
+	// Gets the resource group the request targets (the resolver is aware of the mapping host<->resourceGroup)
 	resourceGroup, err := h.resourceGroupResolver(req.Request.Host)
 	if err != nil {
 		_ = resp.WriteErrorString(http.StatusInternalServerError, err.Error())
@@ -419,17 +422,17 @@ func (h *apiServerHandler) apiV1Delete(req *restful.Request, resp *restful.Respo
 
 func (h *apiServerHandler) apiV1PortForward(req *restful.Request, resp *restful.Response) {
 	// In order to handle a port forward request the current connection has to be upgraded
-	// in order to become compliant with the spyd protocol.
+	// to become compliant with the SPDY protocol.
 	// This implies two steps:
 	// - Adding support for handling multiple http streams, used for subsequent operations over
 	//   the forwarded connection.
 	// - Opening a connection to the target endpoint, the endpoint to port forward to, and setting up
-	//   a bi-directional copy of data because the server acts as a man in the middle.
+	//   a bidirectional copy of data because the server acts as a man in the middle.
 
 	podName := req.PathParameter("name")
 	podNamespace := req.PathParameter("namespace")
 
-	// Perform a sub protocol negotiation, ensuring tha client and the server agree on how
+	// Perform a sub protocol negotiation, ensuring that client and server agree on how
 	// to handle communications over the port forwarded connection.
 	request := req.Request
 	respWriter := resp.ResponseWriter
@@ -439,7 +442,7 @@ func (h *apiServerHandler) apiV1PortForward(req *restful.Request, resp *restful.
 		return
 	}
 
-	// Create a channel where to handle http streams that will be generated for each subsequent
+	// Create a channel to handle http streams that will be generated for each subsequent
 	// operations over the port forwarded connection.
 	streamChan := make(chan httpstream.Stream, 1)
 
@@ -470,23 +473,25 @@ func (h *apiServerHandler) apiV1PortForward(req *restful.Request, resp *restful.
 			return h.doPortForward(ctx, req.Request.Host, stream)
 		},
 	)
+
+	// TODO: Consider using req.Request.Context()
 	streamHandler.Run(context.Background())
 }
 
 // doPortForward establish a connection to the target of the port forward operation,  and sets up
-// a bi-directional copy of data.
+// a bidirectional copy of data.
 // In the case of this provider, the target endpoint is always on the same server (the goofy controller pod).
 func (h *apiServerHandler) doPortForward(ctx context.Context, address string, stream io.ReadWriteCloser) error {
 	// Get a connection to the target of the port forward operation.
 	dial, err := net.Dial("tcp", address)
 	if err != nil {
-		return fmt.Errorf("failed to dial \"%s\": %w", address, err)
+		return fmt.Errorf("failed to dial %q: %w", address, err)
 	}
 	defer func() {
 		_ = dial.Close()
 	}()
 
-	// Create a tunnel for bi-directional copy of data between the stream
+	// Create a tunnel for bidirectional copy of data between the stream
 	// originated from the initiator of the port forward operation and the target.
 	return gportforward.HTTPStreamTunnel(ctx, stream, dial)
 }
@@ -498,7 +503,7 @@ func (h *apiServerHandler) healthz(_ *restful.Request, resp *restful.Response) {
 func requestToGVK(req *restful.Request) (*schema.GroupVersionKind, error) {
 	resourceList := getAPIResourceList(req)
 	if resourceList == nil {
-		return nil, errors.Errorf("No APIResourceList defined for %s", req.PathParameters())
+		return nil, errors.Errorf("no APIResourceList defined for %s", req.PathParameters())
 	}
 	gv, err := schema.ParseGroupVersion(resourceList.GroupVersion)
 	if err != nil {
@@ -518,7 +523,7 @@ func requestToGVK(req *restful.Request) (*schema.GroupVersionKind, error) {
 func getAPIResourceList(req *restful.Request) *metav1.APIResourceList {
 	if req.PathParameter("group") != "" {
 		if req.PathParameter("group") == "rbac.authorization.k8s.io" && req.PathParameter("version") == "v1" {
-			return rbav1APIResourceList
+			return rbacv1APIResourceList
 		}
 		return nil
 	}
