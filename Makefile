@@ -118,6 +118,10 @@ lint: $(GOLANGCI_LINT) ## Lint the codebase
 lint-fix: $(GOLANGCI_LINT) ## Lint the codebase and run auto-fixers if supported by the linter
 	GOLANGCI_LINT_EXTRA_ARGS=--fix $(MAKE) lint
 
+.PHONY: verify-boilerplate
+verify-boilerplate: ## Verify boilerplate text exists in each file
+	TRACE=$(TRACE) ./hack/verify-boilerplate.sh
+
 ## --------------------------------------
 ## Cleanup / Verification
 ## --------------------------------------
