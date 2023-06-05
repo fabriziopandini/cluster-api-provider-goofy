@@ -49,7 +49,7 @@ func apiServerCertificateConfig(controlPlaneIP string) *certs.Config {
 			"localhost",
 		},
 		IPs: []net.IP{
-			// NOTE: PodIP is not required (it is the same of control plane IP)
+			// NOTE: PodIP is not required (it is the same as the control plane IP)
 			net.IPv4(127, 0, 0, 1),
 			net.IPv6loopback,
 			net.ParseIP(controlPlaneIP),
@@ -67,7 +67,7 @@ func apiServerCertificateConfig(controlPlaneIP string) *certs.Config {
 // to be used for access to the API server.
 func adminClientCertificateConfig() *certs.Config {
 	return &certs.Config{
-		CommonName:   "admin",
+		CommonName:   "kubernetes-admin",
 		Organization: []string{"system:masters"},
 		Usages:       []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	}

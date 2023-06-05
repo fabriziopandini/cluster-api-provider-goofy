@@ -90,16 +90,16 @@ func TestAPI_corev1_CRUD(t *testing.T) {
 	err = wcmux.AddEtcdMember(wcl1, etcdPodMember1, etcdCert, etcdKey)
 	require.NoError(t, err)
 
-	// Test API using a controller runtime client to call IT
+	// Test API using a controller runtime client to call it.
 	c, err := listener.GetClient()
 	require.NoError(t, err)
 
 	// create
 
-	nc := &corev1.Node{
+	n := &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{Name: "foo"},
 	}
-	err = c.Create(ctx, nc)
+	err = c.Create(ctx, n)
 	require.NoError(t, err)
 
 	// list
@@ -107,10 +107,12 @@ func TestAPI_corev1_CRUD(t *testing.T) {
 	nl := &corev1.NodeList{}
 	err = c.List(ctx, nl)
 	require.NoError(t, err)
+	require.Len(t, nl.Items, 1)
+	require.Equal(t, nl.Items[0].Name, "foo")
 
 	// get
 
-	n := &corev1.Node{}
+	n = &corev1.Node{}
 	err = c.Get(ctx, client.ObjectKey{Name: "foo"}, n)
 	require.NoError(t, err)
 
@@ -122,6 +124,7 @@ func TestAPI_corev1_CRUD(t *testing.T) {
 	require.NoError(t, err)
 
 	n3 := n2.DeepCopy()
+	// TODO: n doesn't have taints, so not sure what we are testing here.
 	taints := []corev1.Taint{}
 	for _, taint := range n.Spec.Taints {
 		if taint.Key == "foo" {
@@ -142,6 +145,7 @@ func TestAPI_corev1_CRUD(t *testing.T) {
 func TestAPI_rbacv1_CRUD(t *testing.T) {
 	manager := cmanager.New(scheme)
 
+	// TODO: deduplicate this setup code with the test above
 	host := "127.0.0.1"
 	wcmux := NewWorkloadClustersMux(manager, host)
 
@@ -176,40 +180,41 @@ func TestAPI_rbacv1_CRUD(t *testing.T) {
 
 	// create
 
-	nc := &rbacv1.ClusterRole{
+	cr := &rbacv1.ClusterRole{
 		ObjectMeta: metav1.ObjectMeta{Name: "foo"},
 	}
-	err = c.Create(ctx, nc)
+	err = c.Create(ctx, cr)
 	require.NoError(t, err)
 
 	// list
 
-	nl := &rbacv1.ClusterRoleList{}
-	err = c.List(ctx, nl)
+	crl := &rbacv1.ClusterRoleList{}
+	err = c.List(ctx, crl)
 	require.NoError(t, err)
 
 	// get
 
-	n := &rbacv1.ClusterRole{}
-	err = c.Get(ctx, client.ObjectKey{Name: "foo"}, n)
+	cr = &rbacv1.ClusterRole{}
+	err = c.Get(ctx, client.ObjectKey{Name: "foo"}, cr)
 	require.NoError(t, err)
 
 	// patch
 
-	n2 := n.DeepCopy()
-	n2.Annotations = map[string]string{"foo": "bar"}
-	err = c.Patch(ctx, n2, client.MergeFrom(n))
+	cr2 := cr.DeepCopy()
+	cr2.Annotations = map[string]string{"foo": "bar"}
+	err = c.Patch(ctx, cr2, client.MergeFrom(cr))
 	require.NoError(t, err)
 
 	// delete
 
-	err = c.Delete(ctx, n)
+	err = c.Delete(ctx, cr)
 	require.NoError(t, err)
 }
 
 func TestAPI_PortForward(t *testing.T) {
 	manager := cmanager.New(scheme)
 
+	// TODO: deduplicate this setup code with the test above
 	host := "127.0.0.1"
 	wcmux := NewWorkloadClustersMux(manager, host)
 
@@ -237,7 +242,7 @@ func TestAPI_PortForward(t *testing.T) {
 	require.NoError(t, err)
 
 	// Setup resource group
-	manager.AddResourceGroup("workload-cluster1")
+	manager.AddResourceGroup(wcl1)
 
 	etcdPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -256,7 +261,7 @@ func TestAPI_PortForward(t *testing.T) {
 			},
 		},
 	}
-	err = manager.GetResourceGroup("workload-cluster1").GetClient().Create(ctx, etcdPod)
+	err = manager.GetResourceGroup(wcl1).GetClient().Create(ctx, etcdPod)
 	require.NoError(t, err)
 
 	// Test API server TLS handshake via port forward.
@@ -321,8 +326,10 @@ func TestAPI_PortForward(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = etcdClient1.MemberList(ctx)
+	ml, err := etcdClient1.MemberList(ctx)
 	require.NoError(t, err)
+	require.Len(t, ml.Members, 1)
+	require.Equal(t, ml.Members[0].Name, "1")
 
 	err = etcdClient1.Close()
 	require.NoError(t, err)

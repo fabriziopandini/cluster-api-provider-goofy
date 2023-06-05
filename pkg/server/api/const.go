@@ -20,13 +20,13 @@ import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 var (
 	// apiVersions is the value returned by /api discovery call.
-	// Note: This must contain all the API are required by CAPI.
+	// Note: This must contain all APIs required by CAPI.
 	apiVersions = &metav1.APIVersions{
 		Versions: []string{"v1"},
 	}
 
-	// apiVersions is the value returned by api/v1 discovery call.
-	// Note: This must contain all the API are required by CAPI.
+	// apiVersions is the value returned by /api/v1 discovery call.
+	// Note: This must contain all APIs required by CAPI.
 	corev1APIResourceList = &metav1.APIResourceList{
 		GroupVersion: "v1",
 		APIResources: []metav1.APIResource{
@@ -105,8 +105,8 @@ var (
 		},
 	}
 
-	// apiVersions is the value returned by apis discovery call.
-	// Note: This must contain all the API are required by CAPI.
+	// apiVersions is the value returned by /apis discovery call.
+	// Note: This must contain all APIs required by CAPI.
 	apiGroupList = &metav1.APIGroupList{
 		Groups: []metav1.APIGroup{
 			{
@@ -125,9 +125,9 @@ var (
 		},
 	}
 
-	// apiVersions is the value returned by apis/rbac.authorization.k8s.io/v1  discovery call.
-	// Note: This must contain all the API are required by CAPI.
-	rbav1APIResourceList = &metav1.APIResourceList{
+	// apiVersions is the value returned by /apis/rbac.authorization.k8s.io/v1  discovery call.
+	// Note: This must contain all APIs required by CAPI.
+	rbacv1APIResourceList = &metav1.APIResourceList{
 		GroupVersion: "rbac.authorization.k8s.io/v1",
 		APIResources: []metav1.APIResource{
 			{

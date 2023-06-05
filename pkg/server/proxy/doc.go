@@ -19,5 +19,7 @@ Package proxy is a copy of sigs.k8s.io/cluster-api//controlplane/kubeadm/interna
 
 It provides utilities for calling a service via a port forwarded connection, and we are using it
 to API's fake port forward implementation.
+
+TODO: Consider re-using the copied package from KCP
 */
 package proxy
