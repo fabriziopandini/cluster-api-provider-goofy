@@ -233,7 +233,7 @@ func Test_cache_client(t *testing.T) {
 		t.Run("fails if resourceGroup doesn't exist", func(t *testing.T) {
 			g := NewWithT(t)
 
-			obj := &cloudv1.CloudLoadBalancer{}
+			obj := &cloudv1.CloudMachine{}
 			err := c.Get("bar", types.NamespacedName{Name: "bar"}, obj)
 			g.Expect(err).To(HaveOccurred())
 			g.Expect(apierrors.IsBadRequest(err)).To(BeTrue())
@@ -242,7 +242,7 @@ func Test_cache_client(t *testing.T) {
 		t.Run("fails if gvk doesn't exist", func(t *testing.T) {
 			g := NewWithT(t)
 
-			obj := &cloudv1.CloudLoadBalancer{}
+			obj := &cloudv1.CloudMachine{}
 			err := c.Get("foo", types.NamespacedName{Name: "bar"}, obj)
 			g.Expect(err).To(HaveOccurred())
 			g.Expect(apierrors.IsNotFound(err)).To(BeTrue())
@@ -380,7 +380,7 @@ func Test_cache_client(t *testing.T) {
 		t.Run("fails if resourceGroup doesn't exist", func(t *testing.T) {
 			g := NewWithT(t)
 
-			obj := &cloudv1.CloudLoadBalancer{
+			obj := &cloudv1.CloudMachine{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "bar",
 				},
