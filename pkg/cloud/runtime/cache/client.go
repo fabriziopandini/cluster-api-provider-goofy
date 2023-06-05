@@ -391,6 +391,7 @@ func (c *cache) doTryDeleteLocked(resourceGroup string, tracker *resourceGroupTr
 	}
 
 	// Loop through objects that are owned by obj and try to delete them.
+	// TODO: Consider only deleting the hierarchy if the obj doesn't have any finalizers.
 	if ownedReferences, ok := tracker.ownedObjects[ownReference{gvk: objGVK, key: objKey}]; ok {
 		for ref := range ownedReferences {
 			deleted, err := c.doTryDeleteLocked(resourceGroup, tracker, ref.gvk, ref.key)
@@ -434,6 +435,8 @@ func (c *cache) doTryDeleteLocked(resourceGroup string, tracker *resourceGroupTr
 	}
 
 	// Object doesn't have finalizers, delete it.
+	// Note: we don't call informDelete here because we couldn't reconcile it
+	// because the object is already gone from the tracker.
 	delete(objects, objKey)
 	c.afterDelete(resourceGroup, obj)
 	return true, nil

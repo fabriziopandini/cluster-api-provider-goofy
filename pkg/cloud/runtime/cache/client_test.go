@@ -582,7 +582,8 @@ func Test_cache_client(t *testing.T) {
 			err = c.Get("foo", types.NamespacedName{Name: "baz"}, objAfterUpdate)
 			require.NoError(t, err)
 
-			require.NotEqual(t, objBefore.GetDeletionTimestamp(), objAfterUpdate.GetDeletionTimestamp(), "deletion timestamp must be changed")
+			require.Zero(t, objBefore.GetDeletionTimestamp(), "deletion timestamp before delete must not be set")
+			require.NotZero(t, objAfterUpdate.GetDeletionTimestamp(), "deletion timestamp after delete must be set")
 			objBefore.DeletionTimestamp = objAfterUpdate.DeletionTimestamp
 			require.NotEqual(t, objBefore.GetAnnotations()[lastSyncTimeAnnotation], objAfterUpdate.GetAnnotations()[lastSyncTimeAnnotation], "last sync version must be changed")
 			objBefore.Annotations = objAfterUpdate.Annotations

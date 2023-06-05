@@ -74,6 +74,7 @@ func (m *manager) DeleteResourceGroup(name string) {
 	m.cache.DeleteResourceGroup(name)
 }
 
+// GetResourceGroup returns a resource group which reads from the cache.
 func (m *manager) GetResourceGroup(name string) cresourcegroup.ResourceGroup {
 	return cresourcegroup.NewResourceGroup(name, m.cache)
 }
