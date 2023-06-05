@@ -83,8 +83,9 @@ type cache struct {
 }
 
 type resourceGroupTracker struct {
-	lock         sync.RWMutex
-	objects      map[schema.GroupVersionKind]map[types.NamespacedName]client.Object
+	lock    sync.RWMutex
+	objects map[schema.GroupVersionKind]map[types.NamespacedName]client.Object
+	// ownedObjects tracks ownership. Key is the owner, values are the owned objects.
 	ownedObjects map[ownReference]map[ownReference]struct{}
 }
 
@@ -93,16 +94,16 @@ type ownReference struct {
 	key types.NamespacedName
 }
 
-func newOwnReferenceFromOwnerReference(namespace string, o metav1.OwnerReference) (*ownReference, error) {
-	gv, err := schema.ParseGroupVersion(o.APIVersion)
+func newOwnReferenceFromOwnerReference(namespace string, owner metav1.OwnerReference) (*ownReference, error) {
+	gv, err := schema.ParseGroupVersion(owner.APIVersion)
 	if err != nil {
-		return nil, apierrors.NewBadRequest(fmt.Sprintf("invalid APIVersion in ownerReferences: %s", o.APIVersion))
+		return nil, apierrors.NewBadRequest(fmt.Sprintf("invalid APIVersion in ownerReferences: %s", owner.APIVersion))
 	}
-	ownerGVK := gv.WithKind(o.Kind)
+	ownerGVK := gv.WithKind(owner.Kind)
 	ownerKey := types.NamespacedName{
 		// TODO: check if there is something to do for namespaced objects owned by global objects
 		Namespace: namespace,
-		Name:      o.Name,
+		Name:      owner.Name,
 	}
 	return &ownReference{gvk: ownerGVK, key: ownerKey}, nil
 }
@@ -154,8 +155,7 @@ func (c *cache) AddResourceGroup(name string) {
 		return
 	}
 	c.resourceGroups[name] = &resourceGroupTracker{
-		lock:         sync.RWMutex{},
-		objects:      make(map[schema.GroupVersionKind]map[types.NamespacedName]client.Object),
+		objects:      map[schema.GroupVersionKind]map[types.NamespacedName]client.Object{},
 		ownedObjects: map[ownReference]map[ownReference]struct{}{},
 	}
 }
@@ -182,6 +182,7 @@ func (c *cache) gvkGetAndSet(obj runtime.Object) (schema.GroupVersionKind, error
 	return gvk, nil
 }
 
+// unsafeGuessGroupVersionResource assumes Resource is equal to Kind which is not the case in normal Kubernetes.
 func unsafeGuessGroupVersionResource(gvk schema.GroupVersionKind) schema.GroupVersionResource {
 	return schema.GroupVersionResource{Group: gvk.Group, Version: gvk.Version, Resource: gvk.Kind}
 }
