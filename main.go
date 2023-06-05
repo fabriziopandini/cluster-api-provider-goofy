@@ -49,9 +49,9 @@ import (
 	infrav1 "github.com/fabriziopandini/cluster-api-provider-goofy/api/v1alpha1"
 	// +kubebuilder:scaffold:imports
 	"github.com/fabriziopandini/cluster-api-provider-goofy/controllers"
-	"github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud"
-	cloudv1 "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/api/v1alpha1"
-	"github.com/fabriziopandini/cluster-api-provider-goofy/pkg/server"
+	"github.com/fabriziopandini/cluster-api-provider-goofy/internal/cloud"
+	cloudv1 "github.com/fabriziopandini/cluster-api-provider-goofy/internal/cloud/api/v1alpha1"
+	"github.com/fabriziopandini/cluster-api-provider-goofy/internal/server"
 )
 
 var (

@@ -93,11 +93,11 @@ generate-manifests: $(CONTROLLER_GEN) ## Generate manifests e.g. CRD, RBAC etc. 
 
 .PHONY: generate-go-deepcopy
 generate-go-deepcopy: $(CONTROLLER_GEN) ## Generate deepcopy go code
-	$(MAKE) clean-generated-deepcopy SRC_DIRS="./api,./pkg/cloud/api"
+	$(MAKE) clean-generated-deepcopy SRC_DIRS="./api,./internal/cloud/api"
 	$(CONTROLLER_GEN) \
 		object:headerFile=./hack/boilerplate/boilerplate.generatego.txt \
 		paths=./api/... \
-        paths=./pkg/cloud/api/...
+        paths=./internal/cloud/api/...
 
 .PHONY: generate-modules
 generate-modules: ## Run go mod tidy to ensure modules are up to date

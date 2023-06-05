@@ -24,9 +24,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 
+	"github.com/fabriziopandini/cluster-api-provider-goofy/internal/cloud"
 	goofycontrollers "github.com/fabriziopandini/cluster-api-provider-goofy/internal/controllers"
-	"github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud"
-	"github.com/fabriziopandini/cluster-api-provider-goofy/pkg/server"
+	"github.com/fabriziopandini/cluster-api-provider-goofy/internal/server"
 )
 
 // Following types provides access to reconcilers implemented in internal/controllers, thus

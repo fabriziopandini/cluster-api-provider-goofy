@@ -30,12 +30,14 @@ const (
 	ClusterFinalizer = "goofycluster.infrastructure.cluster.x-k8s.io"
 )
 
+// GoofyClusterSpec defines the desired state of the GoofyCluster.
 type GoofyClusterSpec struct {
 	// ControlPlaneEndpoint represents the endpoint used to communicate with the control plane.
 	// +optional
 	ControlPlaneEndpoint APIEndpoint `json:"controlPlaneEndpoint"`
 }
 
+// GoofyClusterStatus defines the observed state of the GoofyCluster.
 type GoofyClusterStatus struct {
 	// Ready denotes that the goofy cluster (infrastructure) is ready.
 	// +optional
@@ -63,6 +65,7 @@ type APIEndpoint struct {
 // +kubebuilder:printcolumn:name="Cluster",type="string",JSONPath=".metadata.labels['cluster\\.x-k8s\\.io/cluster-name']",description="Cluster"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp",description="Time duration since creation of GoofyCluster"
 
+// GoofyCluster is the Schema for the goofy clusters API.
 type GoofyCluster struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`

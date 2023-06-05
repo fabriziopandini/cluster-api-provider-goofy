@@ -165,4 +165,11 @@ issues:
   # We are disabling default golangci exclusions because we want to help reviewers to focus on reviewing the most relevant
   # changes in PRs and avoid nitpicking.
   exclude-use-default: false
-  #exclude-rules:
+  # Just synced over some rules from core Cluster API to avoid fixing findings which are ignored there.
+  exclude-rules:
+  - linters:
+    - revive
+    text: "exported: exported method .*\\.(Reconcile|SetupWithManager|SetupWebhookWithManager) should have comment or be unexported"
+  - linters:
+    - errcheck
+    text: Error return value of .((os\.)?std(out|err)\..*|.*Close|.*Flush|os\.Remove(All)?|.*print(f|ln)?|os\.(Un)?Setenv). is not checked

@@ -36,8 +36,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 
 	infrav1 "github.com/fabriziopandini/cluster-api-provider-goofy/api/v1alpha1"
-	"github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud"
-	"github.com/fabriziopandini/cluster-api-provider-goofy/pkg/server"
+	"github.com/fabriziopandini/cluster-api-provider-goofy/internal/cloud"
+	"github.com/fabriziopandini/cluster-api-provider-goofy/internal/server"
 )
 
 // GoofyClusterReconciler reconciles a GoofyCluster object.
@@ -187,6 +187,7 @@ func (r *GoofyClusterReconciler) reconcileNormal(_ context.Context, cluster *clu
 	return ctrl.Result{}, nil
 }
 
+//nolint:unparam // once we implemented this func we will also return errors
 func (r *GoofyClusterReconciler) reconcileDelete(_ context.Context, goofyCluster *infrav1.GoofyCluster) (ctrl.Result, error) {
 	// TODO: implement
 	controllerutil.RemoveFinalizer(goofyCluster, infrav1.ClusterFinalizer)
