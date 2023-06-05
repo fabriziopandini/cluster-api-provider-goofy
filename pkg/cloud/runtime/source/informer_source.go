@@ -29,7 +29,7 @@ import (
 	cpredicate "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/predicate"
 )
 
-// Informer is used to provide a source of events originating inside the resourceGroup from Watches (e.g. Resource Create).
+// Informer is used to provide a source of events originating from CRUD operations inside the resourceGroup (e.g. Resource Create).
 type Informer struct {
 	Informer ccache.Informer
 }
