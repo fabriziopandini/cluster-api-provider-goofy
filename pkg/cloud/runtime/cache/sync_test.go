@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
+	. "github.com/onsi/gomega"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
@@ -29,6 +29,8 @@ import (
 )
 
 func Test_cache_sync(t *testing.T) {
+	g := NewWithT(t)
+
 	ctx, cancel := context.WithCancel(context.TODO())
 	defer cancel()
 
@@ -36,13 +38,13 @@ func Test_cache_sync(t *testing.T) {
 	c.syncPeriod = 5 * time.Second // force a shorter sync period
 	h := &fakeHandler{}
 	i, err := c.GetInformer(ctx, &cloudv1.CloudMachine{})
-	require.NoError(t, err)
+	g.Expect(err).ToNot(HaveOccurred())
 	err = i.AddEventHandler(h)
-	require.NoError(t, err)
+	g.Expect(err).ToNot(HaveOccurred())
 
 	err = c.Start(ctx)
-	require.NoError(t, err)
-	require.True(t, c.started)
+	g.Expect(err).ToNot(HaveOccurred())
+	g.Expect(c.started).To(BeTrue())
 
 	c.AddResourceGroup("foo")
 
@@ -52,16 +54,16 @@ func Test_cache_sync(t *testing.T) {
 		},
 	}
 	err = c.Create("foo", obj)
-	require.NoError(t, err)
+	g.Expect(err).ToNot(HaveOccurred())
 
 	objBefore := &cloudv1.CloudMachine{}
 	err = c.Get("foo", types.NamespacedName{Name: "baz"}, objBefore)
-	require.NoError(t, err)
+	g.Expect(err).ToNot(HaveOccurred())
 
 	lastSyncBefore, ok := lastSyncTimeAnnotationValue(objBefore)
-	require.True(t, ok)
+	g.Expect(ok).To(BeTrue())
 
-	require.Eventually(t, func() bool {
+	g.Eventually(func() bool {
 		objAfter := &cloudv1.CloudMachine{}
 		err = c.Get("foo", types.NamespacedName{Name: "baz"}, objAfter)
 		if err != nil {
@@ -75,9 +77,9 @@ func Test_cache_sync(t *testing.T) {
 			return true
 		}
 		return false
-	}, 10*time.Second, 200*time.Millisecond, "object should be synced")
+	}, 10*time.Second, 200*time.Millisecond).Should(BeTrue(), "object should be synced")
 
-	require.Contains(t, h.Events(), "foo, CloudMachine=baz, Synced")
+	g.Expect(h.Events()).To(ContainElement("foo, CloudMachine=baz, Synced"))
 
 	cancel()
 }

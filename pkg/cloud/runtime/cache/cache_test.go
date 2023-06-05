@@ -24,7 +24,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
+	. "github.com/onsi/gomega"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -44,6 +44,8 @@ func init() {
 
 func Test_cache_scale(t *testing.T) {
 	t.Skip()
+	g := NewWithT(t)
+
 	ctrl.SetLogger(klog.Background())
 
 	resourceGroups := 1000
@@ -64,11 +66,11 @@ func Test_cache_scale(t *testing.T) {
 	c.syncPeriod = testDuration / 10                        // force a shorter sync period
 	c.garbageCollectorRequeueAfter = 500 * time.Millisecond // force a shorter gc requeueAfter
 	err := c.Start(ctx)
-	require.NoError(t, err)
+	g.Expect(err).ToNot(HaveOccurred())
 
-	require.Eventually(t, func() bool {
+	g.Eventually(func() bool {
 		return c.started
-	}, 5*time.Second, 200*time.Millisecond, "manager should start")
+	}, 5*time.Second, 200*time.Millisecond).Should(BeTrue(), "manager should start")
 
 	machineName := func(j int) string {
 		return fmt.Sprintf("machine-%d", j)
@@ -98,15 +100,15 @@ func Test_cache_scale(t *testing.T) {
 								continue
 							}
 						}
-						require.NoError(t, err)
+						g.Expect(err).ToNot(HaveOccurred())
 						atomic.AddUint64(&createCount, 1)
 					case 1: // list
 						obj := &cloudv1.CloudMachineList{}
 						err := c.List(resourceGroup, obj)
-						require.NoError(t, err)
+						g.Expect(err).ToNot(HaveOccurred())
 						atomic.AddUint64(&listCount, 1)
 					case 2: // delete
-						require.NoError(t, err)
+						g.Expect(err).ToNot(HaveOccurred())
 						machine := &cloudv1.CloudMachine{
 							ObjectMeta: metav1.ObjectMeta{
 								Name: machineName(item),
@@ -116,7 +118,7 @@ func Test_cache_scale(t *testing.T) {
 						if apierrors.IsNotFound(err) {
 							continue
 						}
-						require.NoError(t, err)
+						g.Expect(err).ToNot(HaveOccurred())
 						atomic.AddUint64(&deleteCount, 1)
 					}
 
