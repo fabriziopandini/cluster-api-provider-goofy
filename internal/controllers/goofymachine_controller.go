@@ -47,9 +47,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 
 	infrav1 "github.com/fabriziopandini/cluster-api-provider-goofy/api/v1alpha1"
-	"github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud"
-	cloudv1 "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/api/v1alpha1"
-	"github.com/fabriziopandini/cluster-api-provider-goofy/pkg/server"
+	"github.com/fabriziopandini/cluster-api-provider-goofy/internal/cloud"
+	cloudv1 "github.com/fabriziopandini/cluster-api-provider-goofy/internal/cloud/api/v1alpha1"
+	"github.com/fabriziopandini/cluster-api-provider-goofy/internal/server"
 )
 
 // GoofyMachineReconciler reconciles a GoofyMachine object.
@@ -333,8 +333,8 @@ func (r *GoofyMachineReconciler) reconcileNormal(ctx context.Context, cluster *c
 		}
 		etcdPod.Annotations = map[string]string{
 			// TODO: read this from existing etcd pods, if any.
-			"etcd.internal.goofy.cluster.x-k8s.io/cluster-id": fmt.Sprintf("%d", rand.Uint32()),
-			"etcd.internal.goofy.cluster.x-k8s.io/member-id":  fmt.Sprintf("%d", rand.Uint32()),
+			"etcd.internal.goofy.cluster.x-k8s.io/cluster-id": fmt.Sprintf("%d", rand.Uint32()), //nolint:gosec // weak random number generator is good enough here
+			"etcd.internal.goofy.cluster.x-k8s.io/member-id":  fmt.Sprintf("%d", rand.Uint32()), //nolint:gosec // weak random number generator is good enough here
 			// TODO: set this only if there are no other leaders.
 			"etcd.internal.goofy.cluster.x-k8s.io/leader-from": time.Now().Format(time.RFC3339),
 		}
@@ -468,6 +468,7 @@ func (r *GoofyMachineReconciler) reconcileNormal(ctx context.Context, cluster *c
 	return ctrl.Result{}, nil
 }
 
+//nolint:unparam // once we implemented this func we will also return errors
 func (r *GoofyMachineReconciler) reconcileDelete(_ context.Context, goofyMachine *infrav1.GoofyMachine) (ctrl.Result, error) {
 	// TODO: implement
 	controllerutil.RemoveFinalizer(goofyMachine, infrav1.MachineFinalizer)
