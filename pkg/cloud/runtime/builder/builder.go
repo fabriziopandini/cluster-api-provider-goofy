@@ -156,7 +156,7 @@ func (blder *Builder) doWatch() error {
 			return err
 		}
 
-		src := &csource.Informer{Type: blder.forInput.object, Informer: i}
+		src := &csource.Informer{Informer: i}
 		hdler := &handler.EnqueueRequestForObject{}
 		allPredicates := append(blder.globalPredicates, blder.forInput.predicates...)
 		if err := blder.ctrl.Watch(src, hdler, allPredicates...); err != nil {

@@ -29,8 +29,8 @@ import (
 	"testing"
 	"time"
 
+	. "github.com/onsi/gomega"
 	"github.com/pkg/errors"
-	"github.com/stretchr/testify/require"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"google.golang.org/grpc"
 	corev1 "k8s.io/api/core/v1"
@@ -60,6 +60,7 @@ func init() {
 }
 
 func TestAPI_corev1_CRUD(t *testing.T) {
+	g := NewWithT(t)
 	manager := cmanager.New(scheme)
 
 	host := "127.0.0.1"
@@ -70,29 +71,29 @@ func TestAPI_corev1_CRUD(t *testing.T) {
 	manager.AddResourceGroup(wcl1)
 
 	listener, err := wcmux.InitWorkloadClusterListener(wcl1)
-	require.NoError(t, err)
-	require.Equal(t, listener.Host(), host)
-	require.NotEmpty(t, listener.Port())
+	g.Expect(err).ToNot(HaveOccurred())
+	g.Expect(listener.Host()).To(Equal(host))
+	g.Expect(listener.Port()).ToNot(BeZero())
 
 	caCert, caKey, err := newCertificateAuthority()
-	require.NoError(t, err)
+	g.Expect(err).ToNot(HaveOccurred())
 
 	// InfraMachine controller >> when "creating the API Server pod"
 	apiServerPod1 := "kube-apiserver-1"
 	err = wcmux.AddAPIServer(wcl1, apiServerPod1, caCert, caKey)
-	require.NoError(t, err)
+	g.Expect(err).ToNot(HaveOccurred())
 
 	etcdCert, etcdKey, err := newCertificateAuthority()
-	require.NoError(t, err)
+	g.Expect(err).ToNot(HaveOccurred())
 
 	// InfraMachine controller >> when "creating the Etcd member pod"
 	etcdPodMember1 := "etcd-1"
 	err = wcmux.AddEtcdMember(wcl1, etcdPodMember1, etcdCert, etcdKey)
-	require.NoError(t, err)
+	g.Expect(err).ToNot(HaveOccurred())
 
 	// Test API using a controller runtime client to call it.
 	c, err := listener.GetClient()
-	require.NoError(t, err)
+	g.Expect(err).ToNot(HaveOccurred())
 
 	// create
 
@@ -100,28 +101,28 @@ func TestAPI_corev1_CRUD(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "foo"},
 	}
 	err = c.Create(ctx, n)
-	require.NoError(t, err)
+	g.Expect(err).ToNot(HaveOccurred())
 
 	// list
 
 	nl := &corev1.NodeList{}
 	err = c.List(ctx, nl)
-	require.NoError(t, err)
-	require.Len(t, nl.Items, 1)
-	require.Equal(t, nl.Items[0].Name, "foo")
+	g.Expect(err).ToNot(HaveOccurred())
+	g.Expect(nl.Items).To(HaveLen(1))
+	g.Expect(nl.Items[0].Name).To(Equal("foo"))
 
 	// get
 
 	n = &corev1.Node{}
 	err = c.Get(ctx, client.ObjectKey{Name: "foo"}, n)
-	require.NoError(t, err)
+	g.Expect(err).ToNot(HaveOccurred())
 
 	// patch
 
 	n2 := n.DeepCopy()
 	n2.Annotations = map[string]string{"foo": "bar"}
 	err = c.Patch(ctx, n2, client.MergeFrom(n))
-	require.NoError(t, err)
+	g.Expect(err).ToNot(HaveOccurred())
 
 	n3 := n2.DeepCopy()
 	// TODO: n doesn't have taints, so not sure what we are testing here.
@@ -134,15 +135,19 @@ func TestAPI_corev1_CRUD(t *testing.T) {
 	}
 	n3.Spec.Taints = taints
 	err = c.Patch(ctx, n3, client.StrategicMergeFrom(n2))
-	require.NoError(t, err)
+	g.Expect(err).ToNot(HaveOccurred())
 
 	// delete
 
 	err = c.Delete(ctx, n)
-	require.NoError(t, err)
+	g.Expect(err).ToNot(HaveOccurred())
+
+	err = wcmux.Shutdown(ctx)
+	g.Expect(err).ToNot(HaveOccurred())
 }
 
 func TestAPI_rbacv1_CRUD(t *testing.T) {
+	g := NewWithT(t)
 	manager := cmanager.New(scheme)
 
 	// TODO: deduplicate this setup code with the test above
@@ -154,64 +159,70 @@ func TestAPI_rbacv1_CRUD(t *testing.T) {
 	manager.AddResourceGroup(wcl1)
 
 	listener, err := wcmux.InitWorkloadClusterListener(wcl1)
-	require.NoError(t, err)
-	require.Equal(t, listener.Host(), host)
-	require.NotEmpty(t, listener.Port())
+	g.Expect(err).ToNot(HaveOccurred())
+	g.Expect(listener.Host()).To(Equal(host))
+	g.Expect(listener.Port()).ToNot(BeZero())
 
 	caCert, caKey, err := newCertificateAuthority()
-	require.NoError(t, err)
+	g.Expect(err).ToNot(HaveOccurred())
 
 	// InfraMachine controller >> when "creating the API Server pod"
 	apiServerPod1 := "kube-apiserver-1"
 	err = wcmux.AddAPIServer(wcl1, apiServerPod1, caCert, caKey)
-	require.NoError(t, err)
+	g.Expect(err).ToNot(HaveOccurred())
 
 	etcdCert, etcdKey, err := newCertificateAuthority()
-	require.NoError(t, err)
+	g.Expect(err).ToNot(HaveOccurred())
 
 	// InfraMachine controller >> when "creating the Etcd member pod"
 	etcdPodMember1 := "etcd-1"
 	err = wcmux.AddEtcdMember(wcl1, etcdPodMember1, etcdCert, etcdKey)
-	require.NoError(t, err)
+	g.Expect(err).ToNot(HaveOccurred())
 
 	// Test API using a controller runtime client to call IT
 	c, err := listener.GetClient()
-	require.NoError(t, err)
+	g.Expect(err).ToNot(HaveOccurred())
 
 	// create
 
 	cr := &rbacv1.ClusterRole{
 		ObjectMeta: metav1.ObjectMeta{Name: "foo"},
 	}
+
 	err = c.Create(ctx, cr)
-	require.NoError(t, err)
+	g.Expect(err).ToNot(HaveOccurred())
 
 	// list
 
 	crl := &rbacv1.ClusterRoleList{}
 	err = c.List(ctx, crl)
-	require.NoError(t, err)
+	g.Expect(err).ToNot(HaveOccurred())
+	g.Expect(crl.Items).To(HaveLen(1))
+	g.Expect(crl.Items[0].Name).To(Equal("foo"))
 
 	// get
 
-	cr = &rbacv1.ClusterRole{}
 	err = c.Get(ctx, client.ObjectKey{Name: "foo"}, cr)
-	require.NoError(t, err)
+	g.Expect(err).ToNot(HaveOccurred())
 
 	// patch
 
 	cr2 := cr.DeepCopy()
 	cr2.Annotations = map[string]string{"foo": "bar"}
 	err = c.Patch(ctx, cr2, client.MergeFrom(cr))
-	require.NoError(t, err)
+	g.Expect(err).ToNot(HaveOccurred())
 
 	// delete
 
 	err = c.Delete(ctx, cr)
-	require.NoError(t, err)
+	g.Expect(err).ToNot(HaveOccurred())
+
+	err = wcmux.Shutdown(ctx)
+	g.Expect(err).ToNot(HaveOccurred())
 }
 
 func TestAPI_PortForward(t *testing.T) {
+	g := NewWithT(t)
 	manager := cmanager.New(scheme)
 
 	// TODO: deduplicate this setup code with the test above
@@ -221,25 +232,25 @@ func TestAPI_PortForward(t *testing.T) {
 	// InfraCluster controller >> when "creating the load balancer"
 	wcl1 := "workload-cluster1"
 	listener, err := wcmux.InitWorkloadClusterListener(wcl1)
-	require.NoError(t, err)
-	require.Equal(t, listener.Host(), host)
-	require.NotEmpty(t, listener.Port())
+	g.Expect(err).ToNot(HaveOccurred())
+	g.Expect(listener.Host()).To(Equal(host))
+	g.Expect(listener.Port()).ToNot(BeZero())
 
 	caCert, caKey, err := newCertificateAuthority()
-	require.NoError(t, err)
+	g.Expect(err).ToNot(HaveOccurred())
 
 	// InfraMachine controller >> when "creating the API Server pod"
 	apiServerPod1 := "kube-apiserver-1"
 	err = wcmux.AddAPIServer(wcl1, apiServerPod1, caCert, caKey)
-	require.NoError(t, err)
+	g.Expect(err).ToNot(HaveOccurred())
 
 	etcdCert, etcdKey, err := newCertificateAuthority()
-	require.NoError(t, err)
+	g.Expect(err).ToNot(HaveOccurred())
 
 	// InfraMachine controller >> when "creating the Etcd member pod"
 	etcdPodMember1 := "etcd-1"
 	err = wcmux.AddEtcdMember(wcl1, etcdPodMember1, etcdCert, etcdKey)
-	require.NoError(t, err)
+	g.Expect(err).ToNot(HaveOccurred())
 
 	// Setup resource group
 	manager.AddResourceGroup(wcl1)
@@ -262,12 +273,12 @@ func TestAPI_PortForward(t *testing.T) {
 		},
 	}
 	err = manager.GetResourceGroup(wcl1).GetClient().Create(ctx, etcdPod)
-	require.NoError(t, err)
+	g.Expect(err).ToNot(HaveOccurred())
 
 	// Test API server TLS handshake via port forward.
 
 	restConfig, err := listener.RESTConfig()
-	require.NoError(t, err)
+	g.Expect(err).ToNot(HaveOccurred())
 
 	p1 := proxy.Proxy{
 		Kind:       "pods",
@@ -277,15 +288,15 @@ func TestAPI_PortForward(t *testing.T) {
 	}
 
 	dialer1, err := proxy.NewDialer(p1)
-	require.NoError(t, err)
+	g.Expect(err).ToNot(HaveOccurred())
 
 	rawConn, err := dialer1.DialContextWithAddr(ctx, "kube-apiserver-foo")
-	require.NoError(t, err)
+	g.Expect(err).ToNot(HaveOccurred())
 	defer rawConn.Close()
 
 	conn := tls.Client(rawConn, &tls.Config{InsecureSkipVerify: true}) //nolint:gosec // Intentionally not verifying the server cert here.
 	err = conn.HandshakeContext(ctx)
-	require.NoError(t, err)
+	g.Expect(err).ToNot(HaveOccurred())
 	defer conn.Close()
 
 	// Test Etcd via port forward
@@ -295,10 +306,10 @@ func TestAPI_PortForward(t *testing.T) {
 
 	config := apiServerEtcdClientCertificateConfig()
 	cert, key, err := newCertAndKey(etcdCert, etcdKey, config)
-	require.NoError(t, err)
+	g.Expect(err).ToNot(HaveOccurred())
 
 	clientCert, err := tls.X509KeyPair(certs.EncodeCertPEM(cert), certs.EncodePrivateKeyPEM(key))
-	require.NoError(t, err)
+	g.Expect(err).ToNot(HaveOccurred())
 
 	p2 := proxy.Proxy{
 		Kind:       "pods",
@@ -308,7 +319,7 @@ func TestAPI_PortForward(t *testing.T) {
 	}
 
 	dialer2, err := proxy.NewDialer(p2)
-	require.NoError(t, err)
+	g.Expect(err).ToNot(HaveOccurred())
 
 	etcdClient1, err := clientv3.New(clientv3.Config{
 		Endpoints:   []string{etcdPodMember1},
@@ -324,15 +335,18 @@ func TestAPI_PortForward(t *testing.T) {
 			MinVersion:   tls.VersionTLS12,
 		},
 	})
-	require.NoError(t, err)
+	g.Expect(err).ToNot(HaveOccurred())
 
 	ml, err := etcdClient1.MemberList(ctx)
-	require.NoError(t, err)
-	require.Len(t, ml.Members, 1)
-	require.Equal(t, ml.Members[0].Name, "1")
+	g.Expect(err).ToNot(HaveOccurred())
+	g.Expect(ml.Members).To(HaveLen(1))
+	g.Expect(ml.Members[0].Name).To(Equal("1"))
 
 	err = etcdClient1.Close()
-	require.NoError(t, err)
+	g.Expect(err).ToNot(HaveOccurred())
+
+	err = wcmux.Shutdown(ctx)
+	g.Expect(err).ToNot(HaveOccurred())
 }
 
 // newCertificateAuthority creates new certificate and private key for the certificate authority.

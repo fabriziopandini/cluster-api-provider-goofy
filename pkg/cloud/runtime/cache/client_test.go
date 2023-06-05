@@ -22,7 +22,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
+	. "github.com/onsi/gomega"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -34,30 +34,36 @@ import (
 
 func Test_cache_client(t *testing.T) {
 	t.Run("create objects", func(t *testing.T) {
+		g := NewWithT(t)
+
 		c := NewCache(scheme).(*cache)
 		h := &fakeHandler{}
 		iMachine, err := c.GetInformer(context.TODO(), &cloudv1.CloudMachine{})
-		require.NoError(t, err)
+		g.Expect(err).ToNot(HaveOccurred())
 		err = iMachine.AddEventHandler(h)
-		require.NoError(t, err)
+		g.Expect(err).ToNot(HaveOccurred())
 
 		c.AddResourceGroup("foo")
 
 		t.Run("fails if resourceGroup is empty", func(t *testing.T) {
+			g := NewWithT(t)
+
 			obj := &cloudv1.CloudMachine{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "foo",
 				},
 			}
 			err := c.Create("", obj)
-			require.Error(t, err)
-			require.True(t, apierrors.IsBadRequest(err))
+			g.Expect(err).To(HaveOccurred())
+			g.Expect(apierrors.IsBadRequest(err)).To(BeTrue())
 		})
 
 		t.Run("fails if obj is nil", func(t *testing.T) {
+			g := NewWithT(t)
+
 			err := c.Create("foo", nil)
-			require.Error(t, err)
-			require.True(t, apierrors.IsBadRequest(err))
+			g.Expect(err).To(HaveOccurred())
+			g.Expect(apierrors.IsBadRequest(err)).To(BeTrue())
 		})
 
 		t.Run("fails if unknown kind", func(t *testing.T) {
@@ -65,43 +71,49 @@ func Test_cache_client(t *testing.T) {
 		})
 
 		t.Run("fails if resourceGroup does not exist", func(t *testing.T) {
+			g := NewWithT(t)
+
 			obj := &cloudv1.CloudMachine{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "foo",
 				},
 			}
 			err := c.Create("bar", obj)
-			require.Error(t, err)
-			require.True(t, apierrors.IsBadRequest(err))
+			g.Expect(err).To(HaveOccurred())
+			g.Expect(apierrors.IsBadRequest(err)).To(BeTrue())
 		})
 
 		t.Run("create", func(t *testing.T) {
+			g := NewWithT(t)
+
 			obj := createMachine(t, c, "foo", "bar")
 
 			// Check all the computed fields have been updated on the object.
-			require.False(t, obj.CreationTimestamp.IsZero())
-			require.NotEmpty(t, obj.ResourceVersion)
-			require.Contains(t, obj.Annotations, lastSyncTimeAnnotation)
+			g.Expect(obj.CreationTimestamp.IsZero()).To(BeFalse())
+			g.Expect(obj.ResourceVersion).ToNot(BeEmpty())
+			g.Expect(obj.Annotations).To(HaveKey(lastSyncTimeAnnotation))
 
 			// Check internal state of the tracker is as expected.
 			c.lock.RLock()
 			defer c.lock.RUnlock()
 
-			require.Contains(t, c.resourceGroups["foo"].objects, cloudv1.GroupVersion.WithKind(cloudv1.CloudMachineKind), "gvk must exists in object tracker for foo")
+			g.Expect(c.resourceGroups["foo"].objects).To(HaveKey(cloudv1.GroupVersion.WithKind(cloudv1.CloudMachineKind)), "gvk must exists in object tracker for foo")
 			key := types.NamespacedName{Name: "bar"}
-			require.Contains(t, c.resourceGroups["foo"].objects[cloudv1.GroupVersion.WithKind(cloudv1.CloudMachineKind)], key, "Object bar must exists in object tracker for foo")
+			g.Expect(c.resourceGroups["foo"].objects[cloudv1.GroupVersion.WithKind(cloudv1.CloudMachineKind)]).To(HaveKey(key), "Object bar must exists in object tracker for foo")
 
 			r := c.resourceGroups["foo"].objects[cloudv1.GroupVersion.WithKind(cloudv1.CloudMachineKind)][key]
-			require.Equal(t, r.GetObjectKind().GroupVersionKind(), cloudv1.GroupVersion.WithKind(cloudv1.CloudMachineKind), "gvk must be set")
-			require.Equal(t, r.GetName(), "bar", "name must be equal to object tracker key")
-			require.Equal(t, r.GetResourceVersion(), "v1", "resourceVersion must be set")
-			require.NotZero(t, r.GetCreationTimestamp(), "creation timestamp must be set")
-			require.Contains(t, r.GetAnnotations(), lastSyncTimeAnnotation, "last sync annotation must exists")
+			g.Expect(r.GetObjectKind().GroupVersionKind()).To(Equal(cloudv1.GroupVersion.WithKind(cloudv1.CloudMachineKind)), "gvk must be set")
+			g.Expect(r.GetName()).To(Equal("bar"), "name must be equal to object tracker key")
+			g.Expect(r.GetResourceVersion()).To(Equal("v1"), "resourceVersion must be set")
+			g.Expect(r.GetCreationTimestamp()).ToNot(BeZero(), "creation timestamp must be set")
+			g.Expect(r.GetAnnotations()).To(HaveKey(lastSyncTimeAnnotation), "last sync annotation must exists")
 
-			require.Contains(t, h.Events(), "foo, CloudMachine=bar, Created")
+			g.Expect(h.Events()).To(ContainElement("foo, CloudMachine=bar, Created"))
 		})
 
 		t.Run("fails if Object already exists", func(t *testing.T) {
+			g := NewWithT(t)
+
 			createMachine(t, c, "foo", "bazzz")
 
 			obj := &cloudv1.CloudMachine{
@@ -110,12 +122,14 @@ func Test_cache_client(t *testing.T) {
 				},
 			}
 			err := c.Create("foo", obj)
-			require.Error(t, err)
-			require.True(t, apierrors.IsAlreadyExists(err))
+			g.Expect(err).To(HaveOccurred())
+			g.Expect(apierrors.IsAlreadyExists(err)).To(BeTrue())
 		})
 
 		t.Run("Create with owner references", func(t *testing.T) {
 			t.Run("fails for invalid owner reference", func(t *testing.T) {
+				g := NewWithT(t)
+
 				obj := &cloudv1.CloudMachine{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "child",
@@ -129,10 +143,12 @@ func Test_cache_client(t *testing.T) {
 					},
 				}
 				err := c.Create("foo", obj)
-				require.Error(t, err)
-				require.True(t, apierrors.IsBadRequest(err))
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(apierrors.IsBadRequest(err)).To(BeTrue())
 			})
 			t.Run("fails if referenced object does not exist", func(t *testing.T) {
+				g := NewWithT(t)
+
 				obj := &cloudv1.CloudMachine{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "child",
@@ -146,10 +162,12 @@ func Test_cache_client(t *testing.T) {
 					},
 				}
 				err := c.Create("foo", obj)
-				require.Error(t, err)
-				require.True(t, apierrors.IsBadRequest(err))
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(apierrors.IsBadRequest(err)).To(BeTrue())
 			})
 			t.Run("create updates ownedObjects", func(t *testing.T) {
+				g := NewWithT(t)
+
 				createMachine(t, c, "foo", "parent")
 				obj := &cloudv1.CloudMachine{
 					ObjectMeta: metav1.ObjectMeta{
@@ -164,16 +182,16 @@ func Test_cache_client(t *testing.T) {
 					},
 				}
 				err := c.Create("foo", obj)
-				require.NoError(t, err)
+				g.Expect(err).ToNot(HaveOccurred())
 
 				// Check internal state of the tracker is as expected.
 				c.lock.RLock()
 				defer c.lock.RUnlock()
 
 				parentRef := ownReference{gvk: cloudv1.GroupVersion.WithKind(cloudv1.CloudMachineKind), key: types.NamespacedName{Namespace: "", Name: "parent"}}
-				require.Contains(t, c.resourceGroups["foo"].ownedObjects, parentRef, "there should be ownedObjects for parent")
+				g.Expect(c.resourceGroups["foo"].ownedObjects).To(HaveKey(parentRef), "there should be ownedObjects for parent")
 				childRef := ownReference{gvk: cloudv1.GroupVersion.WithKind(cloudv1.CloudMachineKind), key: types.NamespacedName{Namespace: "", Name: "child"}}
-				require.Contains(t, c.resourceGroups["foo"].ownedObjects[parentRef], childRef, "parent should own child")
+				g.Expect(c.resourceGroups["foo"].ownedObjects[parentRef]).To(HaveKey(childRef), "parent should own child")
 			})
 		})
 	})
@@ -183,23 +201,29 @@ func Test_cache_client(t *testing.T) {
 		c.AddResourceGroup("foo")
 
 		t.Run("fails if resourceGroup is empty", func(t *testing.T) {
+			g := NewWithT(t)
+
 			obj := &cloudv1.CloudMachine{}
 			err := c.Get("", types.NamespacedName{Name: "foo"}, obj)
-			require.Error(t, err)
-			require.True(t, apierrors.IsBadRequest(err))
+			g.Expect(err).To(HaveOccurred())
+			g.Expect(apierrors.IsBadRequest(err)).To(BeTrue())
 		})
 
 		t.Run("fails if name is empty", func(t *testing.T) {
+			g := NewWithT(t)
+
 			obj := &cloudv1.CloudMachine{}
 			err := c.Get("foo", types.NamespacedName{}, obj)
-			require.Error(t, err)
-			require.True(t, apierrors.IsBadRequest(err))
+			g.Expect(err).To(HaveOccurred())
+			g.Expect(apierrors.IsBadRequest(err)).To(BeTrue())
 		})
 
 		t.Run("fails if Object is nil", func(t *testing.T) {
+			g := NewWithT(t)
+
 			err := c.Get("foo", types.NamespacedName{Name: "foo"}, nil)
-			require.Error(t, err)
-			require.True(t, apierrors.IsBadRequest(err))
+			g.Expect(err).To(HaveOccurred())
+			g.Expect(apierrors.IsBadRequest(err)).To(BeTrue())
 		})
 
 		t.Run("fails if unknown kind", func(t *testing.T) {
@@ -207,41 +231,49 @@ func Test_cache_client(t *testing.T) {
 		})
 
 		t.Run("fails if resourceGroup doesn't exist", func(t *testing.T) {
+			g := NewWithT(t)
+
 			obj := &cloudv1.CloudLoadBalancer{}
 			err := c.Get("bar", types.NamespacedName{Name: "bar"}, obj)
-			require.Error(t, err)
-			require.True(t, apierrors.IsBadRequest(err))
+			g.Expect(err).To(HaveOccurred())
+			g.Expect(apierrors.IsBadRequest(err)).To(BeTrue())
 		})
 
 		t.Run("fails if gvk doesn't exist", func(t *testing.T) {
+			g := NewWithT(t)
+
 			obj := &cloudv1.CloudLoadBalancer{}
 			err := c.Get("foo", types.NamespacedName{Name: "bar"}, obj)
-			require.Error(t, err)
-			require.True(t, apierrors.IsNotFound(err))
+			g.Expect(err).To(HaveOccurred())
+			g.Expect(apierrors.IsNotFound(err)).To(BeTrue())
 		})
 
 		t.Run("fails if Object doesn't exist", func(t *testing.T) {
+			g := NewWithT(t)
+
 			createMachine(t, c, "foo", "barz")
 
 			obj := &cloudv1.CloudMachine{}
 			err := c.Get("foo", types.NamespacedName{Name: "bar"}, obj)
-			require.Error(t, err)
-			require.True(t, apierrors.IsNotFound(err))
+			g.Expect(err).To(HaveOccurred())
+			g.Expect(apierrors.IsNotFound(err)).To(BeTrue())
 		})
 
 		t.Run("get", func(t *testing.T) {
+			g := NewWithT(t)
+
 			createMachine(t, c, "foo", "bar")
 
 			obj := &cloudv1.CloudMachine{}
 			err := c.Get("foo", types.NamespacedName{Name: "bar"}, obj)
-			require.NoError(t, err)
+			g.Expect(err).ToNot(HaveOccurred())
 
 			// Check all the computed fields are as expected.
-			require.Equal(t, obj.GetObjectKind().GroupVersionKind(), cloudv1.GroupVersion.WithKind(cloudv1.CloudMachineKind), "gvk must be set")
-			require.Equal(t, obj.GetName(), "bar", "name must be equal to object tracker key")
-			require.Equal(t, obj.GetResourceVersion(), "v1", "resourceVersion must be set")
-			require.NotZero(t, obj.GetCreationTimestamp(), "creation timestamp must be set")
-			require.Contains(t, obj.GetAnnotations(), lastSyncTimeAnnotation, "last sync annotation must be set")
+			g.Expect(obj.GetObjectKind().GroupVersionKind()).To(Equal(cloudv1.GroupVersion.WithKind(cloudv1.CloudMachineKind)), "gvk must be set")
+			g.Expect(obj.GetName()).To(Equal("bar"), "name must be equal to object tracker key")
+			g.Expect(obj.GetResourceVersion()).To(Equal("v1"), "resourceVersion must be set")
+			g.Expect(obj.GetCreationTimestamp()).ToNot(BeZero(), "creation timestamp must be set")
+			g.Expect(obj.GetAnnotations()).To(HaveKey(lastSyncTimeAnnotation), "last sync annotation must be set")
 		})
 	})
 
@@ -250,16 +282,20 @@ func Test_cache_client(t *testing.T) {
 		c.AddResourceGroup("foo")
 
 		t.Run("fails if resourceGroup is empty", func(t *testing.T) {
+			g := NewWithT(t)
+
 			obj := &cloudv1.CloudMachineList{}
 			err := c.List("", obj)
-			require.Error(t, err)
-			require.True(t, apierrors.IsBadRequest(err))
+			g.Expect(err).To(HaveOccurred())
+			g.Expect(apierrors.IsBadRequest(err)).To(BeTrue())
 		})
 
 		t.Run("fails if Object is nil", func(t *testing.T) {
+			g := NewWithT(t)
+
 			err := c.List("foo", nil)
-			require.Error(t, err)
-			require.True(t, apierrors.IsBadRequest(err))
+			g.Expect(err).To(HaveOccurred())
+			g.Expect(apierrors.IsBadRequest(err)).To(BeTrue())
 		})
 
 		t.Run("fails if unknown kind", func(t *testing.T) {
@@ -267,55 +303,65 @@ func Test_cache_client(t *testing.T) {
 		})
 
 		t.Run("fails if resourceGroup doesn't exist", func(t *testing.T) {
+			g := NewWithT(t)
+
 			obj := &cloudv1.CloudMachineList{}
 			err := c.List("bar", obj)
-			require.Error(t, err)
-			require.True(t, apierrors.IsBadRequest(err))
+			g.Expect(err).To(HaveOccurred())
+			g.Expect(apierrors.IsBadRequest(err)).To(BeTrue())
 		})
 
 		t.Run("list", func(t *testing.T) {
+			g := NewWithT(t)
+
 			createMachine(t, c, "foo", "bar")
 			createMachine(t, c, "foo", "baz")
 
 			obj := &cloudv1.CloudMachineList{}
 			err := c.List("foo", obj)
-			require.NoError(t, err)
+			g.Expect(err).ToNot(HaveOccurred())
 
-			require.Len(t, obj.Items, 2)
+			g.Expect(obj.Items).To(HaveLen(2))
 
 			i1 := obj.Items[0]
-			require.Equal(t, i1.GetObjectKind().GroupVersionKind(), cloudv1.GroupVersion.WithKind(cloudv1.CloudMachineKind), "gvk must be set")
-			require.Contains(t, i1.GetAnnotations(), lastSyncTimeAnnotation, "last sync annotation must be present")
+			g.Expect(i1.GetObjectKind().GroupVersionKind()).To(Equal(cloudv1.GroupVersion.WithKind(cloudv1.CloudMachineKind)), "gvk must be set")
+			g.Expect(i1.GetAnnotations()).To(HaveKey(lastSyncTimeAnnotation), "last sync annotation must be present")
 
 			i2 := obj.Items[1]
-			require.Equal(t, i2.GetObjectKind().GroupVersionKind(), cloudv1.GroupVersion.WithKind(cloudv1.CloudMachineKind), "gvk must be set")
-			require.Contains(t, i2.GetAnnotations(), lastSyncTimeAnnotation, "last sync annotation must be present")
+			g.Expect(i2.GetObjectKind().GroupVersionKind()).To(Equal(cloudv1.GroupVersion.WithKind(cloudv1.CloudMachineKind)), "gvk must be set")
+			g.Expect(i2.GetAnnotations()).To(HaveKey(lastSyncTimeAnnotation), "last sync annotation must be present")
 		})
 
 		// TODO: test filtering by labels
 	})
 
 	t.Run("update objects", func(t *testing.T) {
+		g := NewWithT(t)
+
 		c := NewCache(scheme).(*cache)
 		h := &fakeHandler{}
 		i, err := c.GetInformer(context.TODO(), &cloudv1.CloudMachine{})
-		require.NoError(t, err)
+		g.Expect(err).ToNot(HaveOccurred())
 		err = i.AddEventHandler(h)
-		require.NoError(t, err)
+		g.Expect(err).ToNot(HaveOccurred())
 
 		c.AddResourceGroup("foo")
 
 		t.Run("fails if resourceGroup is empty", func(t *testing.T) {
+			g := NewWithT(t)
+
 			obj := &cloudv1.CloudMachine{}
 			err := c.Update("", obj)
-			require.Error(t, err)
-			require.True(t, apierrors.IsBadRequest(err))
+			g.Expect(err).To(HaveOccurred())
+			g.Expect(apierrors.IsBadRequest(err)).To(BeTrue())
 		})
 
 		t.Run("fails if Object is nil", func(t *testing.T) {
+			g := NewWithT(t)
+
 			err := c.Update("foo", nil)
-			require.Error(t, err)
-			require.True(t, apierrors.IsBadRequest(err))
+			g.Expect(err).To(HaveOccurred())
+			g.Expect(apierrors.IsBadRequest(err)).To(BeTrue())
 		})
 
 		t.Run("fails if unknown kind", func(t *testing.T) {
@@ -323,47 +369,57 @@ func Test_cache_client(t *testing.T) {
 		})
 
 		t.Run("fails if name is empty", func(t *testing.T) {
+			g := NewWithT(t)
+
 			obj := &cloudv1.CloudMachine{}
 			err := c.Update("foo", obj)
-			require.Error(t, err)
-			require.True(t, apierrors.IsBadRequest(err))
+			g.Expect(err).To(HaveOccurred())
+			g.Expect(apierrors.IsBadRequest(err)).To(BeTrue())
 		})
 
 		t.Run("fails if resourceGroup doesn't exist", func(t *testing.T) {
+			g := NewWithT(t)
+
 			obj := &cloudv1.CloudLoadBalancer{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "bar",
 				},
 			}
 			err := c.Update("bar", obj)
-			require.Error(t, err)
-			require.True(t, apierrors.IsBadRequest(err))
+			g.Expect(err).To(HaveOccurred())
+			g.Expect(apierrors.IsBadRequest(err)).To(BeTrue())
 		})
 
 		t.Run("fails if Object doesn't exist", func(t *testing.T) {
+			g := NewWithT(t)
+
 			obj := &cloudv1.CloudMachine{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "bar",
 				},
 			}
 			err := c.Update("foo", obj)
-			require.Error(t, err)
-			require.True(t, apierrors.IsNotFound(err))
+			g.Expect(err).To(HaveOccurred())
+			g.Expect(apierrors.IsNotFound(err)).To(BeTrue())
 		})
 
 		t.Run("update - no changes", func(t *testing.T) {
+			g := NewWithT(t)
+
 			objBefore := createMachine(t, c, "foo", "bar")
 
 			objUpdate := objBefore.DeepCopy()
 			err = c.Update("foo", objUpdate)
-			require.NoError(t, err)
+			g.Expect(err).ToNot(HaveOccurred())
 
-			require.Equal(t, objBefore, objUpdate, "obj before and after must be the same")
+			g.Expect(objBefore).To(Equal(objUpdate), "obj before and after must be the same")
 
-			require.NotContains(t, h.Events(), "foo, CloudMachine=bar, Updated")
+			g.Expect(h.Events()).ToNot(ContainElement("foo, CloudMachine=bar, Updated"))
 		})
 
 		t.Run("update - with changes", func(t *testing.T) {
+			g := NewWithT(t)
+
 			objBefore := createMachine(t, c, "foo", "baz")
 
 			time.Sleep(1 * time.Second)
@@ -371,20 +427,22 @@ func Test_cache_client(t *testing.T) {
 			objUpdate := objBefore.DeepCopy()
 			objUpdate.Labels = map[string]string{"foo": "bar"}
 			err = c.Update("foo", objUpdate)
-			require.NoError(t, err)
+			g.Expect(err).ToNot(HaveOccurred())
 
 			// Check all the computed fields are as expected.
-			require.NotEqual(t, objBefore.GetAnnotations()[lastSyncTimeAnnotation], objUpdate.GetAnnotations()[lastSyncTimeAnnotation], "last sync version must be changed")
+			g.Expect(objBefore.GetAnnotations()[lastSyncTimeAnnotation]).ToNot(Equal(objUpdate.GetAnnotations()[lastSyncTimeAnnotation]), "last sync version must be changed")
 			objBefore.Annotations = objUpdate.Annotations
-			require.NotEqual(t, objBefore.GetResourceVersion(), objUpdate.GetResourceVersion(), "Object version must be changed")
+			g.Expect(objBefore.GetResourceVersion()).ToNot(Equal(objUpdate.GetResourceVersion()), "Object version must be changed")
 			objBefore.SetResourceVersion(objUpdate.GetResourceVersion())
 			objBefore.Labels = objUpdate.Labels
-			require.Equal(t, objBefore, objUpdate, "everything else must be the same")
+			g.Expect(objBefore).To(Equal(objUpdate), "everything else must be the same")
 
-			require.Contains(t, h.Events(), "foo, CloudMachine=baz, Updated")
+			g.Expect(h.Events()).To(ContainElement("foo, CloudMachine=baz, Updated"))
 		})
 
 		t.Run("update - with conflict", func(t *testing.T) {
+			g := NewWithT(t)
+
 			objBefore := createMachine(t, c, "foo", "bazz")
 
 			objUpdate1 := objBefore.DeepCopy()
@@ -393,18 +451,20 @@ func Test_cache_client(t *testing.T) {
 			time.Sleep(1 * time.Second)
 
 			err = c.Update("foo", objUpdate1)
-			require.NoError(t, err)
+			g.Expect(err).ToNot(HaveOccurred())
 
 			objUpdate2 := objBefore.DeepCopy()
 			err = c.Update("foo", objUpdate2)
-			require.Error(t, err)
-			require.True(t, apierrors.IsConflict(err))
+			g.Expect(err).To(HaveOccurred())
+			g.Expect(apierrors.IsConflict(err)).To(BeTrue())
 
 			// TODO: check if it has been informed only once
 		})
 
 		t.Run("Update with owner references", func(t *testing.T) {
 			t.Run("fails for invalid owner reference", func(t *testing.T) {
+				g := NewWithT(t)
+
 				obj := &cloudv1.CloudMachine{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "child",
@@ -418,10 +478,12 @@ func Test_cache_client(t *testing.T) {
 					},
 				}
 				err := c.Update("foo", obj)
-				require.Error(t, err)
-				require.True(t, apierrors.IsBadRequest(err))
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(apierrors.IsBadRequest(err)).To(BeTrue())
 			})
 			t.Run("fails if referenced object does not exists", func(t *testing.T) {
+				g := NewWithT(t)
+
 				objBefore := createMachine(t, c, "foo", "child1")
 
 				objUpdate := objBefore.DeepCopy()
@@ -433,10 +495,12 @@ func Test_cache_client(t *testing.T) {
 					},
 				}
 				err := c.Update("foo", objUpdate)
-				require.Error(t, err)
-				require.True(t, apierrors.IsBadRequest(err))
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(apierrors.IsBadRequest(err)).To(BeTrue())
 			})
 			t.Run("updates takes care of ownedObjects", func(t *testing.T) {
+				g := NewWithT(t)
+
 				createMachine(t, c, "foo", "parent1")
 				createMachine(t, c, "foo", "parent2")
 
@@ -453,24 +517,24 @@ func Test_cache_client(t *testing.T) {
 					},
 				}
 				err := c.Create("foo", objBefore)
-				require.NoError(t, err)
+				g.Expect(err).ToNot(HaveOccurred())
 
 				objUpdate := objBefore.DeepCopy()
 				objUpdate.OwnerReferences[0].Name = "parent2"
 
 				err = c.Update("foo", objUpdate)
-				require.NoError(t, err)
+				g.Expect(err).ToNot(HaveOccurred())
 
 				// Check internal state of the tracker
 				c.lock.RLock()
 				defer c.lock.RUnlock()
 
 				parent1Ref := ownReference{gvk: cloudv1.GroupVersion.WithKind(cloudv1.CloudMachineKind), key: types.NamespacedName{Namespace: "", Name: "parent1"}}
-				require.NotContains(t, c.resourceGroups["foo"].ownedObjects, parent1Ref, "there should not be ownedObjects for parent1")
+				g.Expect(c.resourceGroups["foo"].ownedObjects).ToNot(HaveKey(parent1Ref), "there should not be ownedObjects for parent1")
 				parent2Ref := ownReference{gvk: cloudv1.GroupVersion.WithKind(cloudv1.CloudMachineKind), key: types.NamespacedName{Namespace: "", Name: "parent2"}}
-				require.Contains(t, c.resourceGroups["foo"].ownedObjects, parent2Ref, "there should be ownedObjects for parent2")
+				g.Expect(c.resourceGroups["foo"].ownedObjects).To(HaveKey(parent2Ref), "there should be ownedObjects for parent2")
 				childRef := ownReference{gvk: cloudv1.GroupVersion.WithKind(cloudv1.CloudMachineKind), key: types.NamespacedName{Namespace: "", Name: "child2"}}
-				require.Contains(t, c.resourceGroups["foo"].ownedObjects[parent2Ref], childRef, "parent2 should own child")
+				g.Expect(c.resourceGroups["foo"].ownedObjects[parent2Ref]).To(HaveKey(childRef), "parent2 should own child")
 			})
 		})
 
@@ -482,33 +546,41 @@ func Test_cache_client(t *testing.T) {
 	// TODO: test patch
 
 	t.Run("delete objects", func(t *testing.T) {
+		g := NewWithT(t)
+
 		c := NewCache(scheme).(*cache)
 		h := &fakeHandler{}
 		i, err := c.GetInformer(context.TODO(), &cloudv1.CloudMachine{})
-		require.NoError(t, err)
+		g.Expect(err).ToNot(HaveOccurred())
 		err = i.AddEventHandler(h)
-		require.NoError(t, err)
+		g.Expect(err).ToNot(HaveOccurred())
 
 		c.AddResourceGroup("foo")
 
 		t.Run("fails if resourceGroup is empty", func(t *testing.T) {
+			g := NewWithT(t)
+
 			obj := &cloudv1.CloudMachine{}
 			err := c.Delete("", obj)
-			require.Error(t, err)
-			require.True(t, apierrors.IsBadRequest(err))
+			g.Expect(err).To(HaveOccurred())
+			g.Expect(apierrors.IsBadRequest(err)).To(BeTrue())
 		})
 
 		t.Run("fails if Object is nil", func(t *testing.T) {
+			g := NewWithT(t)
+
 			err := c.Delete("foo", nil)
-			require.Error(t, err)
-			require.True(t, apierrors.IsBadRequest(err))
+			g.Expect(err).To(HaveOccurred())
+			g.Expect(apierrors.IsBadRequest(err)).To(BeTrue())
 		})
 
 		t.Run("fails if name is empty", func(t *testing.T) {
+			g := NewWithT(t)
+
 			obj := &cloudv1.CloudMachine{}
 			err := c.Delete("foo", obj)
-			require.Error(t, err)
-			require.True(t, apierrors.IsBadRequest(err))
+			g.Expect(err).To(HaveOccurred())
+			g.Expect(apierrors.IsBadRequest(err)).To(BeTrue())
 		})
 
 		t.Run("fails if unknown kind", func(t *testing.T) {
@@ -516,17 +588,21 @@ func Test_cache_client(t *testing.T) {
 		})
 
 		t.Run("fails if gvk doesn't exist", func(t *testing.T) {
+			g := NewWithT(t)
+
 			obj := &cloudv1.CloudMachine{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "bar",
 				},
 			}
 			err := c.Delete("foo", obj)
-			require.Error(t, err)
-			require.True(t, apierrors.IsNotFound(err))
+			g.Expect(err).To(HaveOccurred())
+			g.Expect(apierrors.IsNotFound(err)).To(BeTrue())
 		})
 
 		t.Run("fails if object doesn't exist", func(t *testing.T) {
+			g := NewWithT(t)
+
 			createMachine(t, c, "foo", "barz")
 
 			obj := &cloudv1.CloudMachine{
@@ -535,26 +611,30 @@ func Test_cache_client(t *testing.T) {
 				},
 			}
 			err := c.Delete("foo", obj)
-			require.Error(t, err)
-			require.True(t, apierrors.IsNotFound(err))
+			g.Expect(err).To(HaveOccurred())
+			g.Expect(apierrors.IsNotFound(err)).To(BeTrue())
 		})
 
 		t.Run("delete", func(t *testing.T) {
+			g := NewWithT(t)
+
 			obj := createMachine(t, c, "foo", "bar")
 
 			err := c.Delete("foo", obj)
-			require.NoError(t, err)
+			g.Expect(err).ToNot(HaveOccurred())
 
 			c.lock.RLock()
 			defer c.lock.RUnlock()
 
-			require.Contains(t, c.resourceGroups["foo"].objects, cloudv1.GroupVersion.WithKind(cloudv1.CloudMachineKind), "gvk must exist in object tracker for foo")
-			require.NotContains(t, c.resourceGroups["foo"].objects[cloudv1.GroupVersion.WithKind(cloudv1.CloudMachineKind)], types.NamespacedName{Name: "bar"}, "Object bar must not exist in object tracker for foo")
+			g.Expect(c.resourceGroups["foo"].objects).To(HaveKey(cloudv1.GroupVersion.WithKind(cloudv1.CloudMachineKind)), "gvk must exist in object tracker for foo")
+			g.Expect(c.resourceGroups["foo"].objects[cloudv1.GroupVersion.WithKind(cloudv1.CloudMachineKind)]).ToNot(HaveKey(types.NamespacedName{Name: "bar"}), "Object bar must not exist in object tracker for foo")
 
-			require.NotContains(t, h.Events(), "foo, CloudMachine=bar, Deleted")
+			g.Expect(h.Events()).ToNot(ContainElement("foo, CloudMachine=bar, Deleted"))
 		})
 
 		t.Run("delete with finalizers", func(t *testing.T) {
+			g := NewWithT(t)
+
 			ctx, cancel := context.WithCancel(context.TODO())
 			defer cancel()
 
@@ -571,33 +651,35 @@ func Test_cache_client(t *testing.T) {
 				},
 			}
 			err := c.Create("foo", objBefore)
-			require.NoError(t, err)
+			g.Expect(err).ToNot(HaveOccurred())
 
 			time.Sleep(1 * time.Second)
 
 			err = c.Delete("foo", objBefore)
-			require.NoError(t, err)
+			g.Expect(err).ToNot(HaveOccurred())
 
 			objAfterUpdate := &cloudv1.CloudMachine{}
 			err = c.Get("foo", types.NamespacedName{Name: "baz"}, objAfterUpdate)
-			require.NoError(t, err)
+			g.Expect(err).ToNot(HaveOccurred())
 
-			require.Zero(t, objBefore.GetDeletionTimestamp(), "deletion timestamp before delete must not be set")
-			require.NotZero(t, objAfterUpdate.GetDeletionTimestamp(), "deletion timestamp after delete must be set")
+			g.Expect(objBefore.GetDeletionTimestamp().IsZero()).To(BeTrue(), "deletion timestamp before delete must not be set")
+			g.Expect(objAfterUpdate.GetDeletionTimestamp().IsZero()).To(BeFalse(), "deletion timestamp after delete must be set")
 			objBefore.DeletionTimestamp = objAfterUpdate.DeletionTimestamp
-			require.NotEqual(t, objBefore.GetAnnotations()[lastSyncTimeAnnotation], objAfterUpdate.GetAnnotations()[lastSyncTimeAnnotation], "last sync version must be changed")
+			g.Expect(objBefore.GetAnnotations()[lastSyncTimeAnnotation]).ToNot(Equal(objAfterUpdate.GetAnnotations()[lastSyncTimeAnnotation]), "last sync version must be changed")
 			objBefore.Annotations = objAfterUpdate.Annotations
-			require.NotEqual(t, objBefore.GetResourceVersion(), objAfterUpdate.GetResourceVersion(), "Object version must be changed")
+			g.Expect(objBefore.GetResourceVersion()).ToNot(Equal(objAfterUpdate.GetResourceVersion()), "Object version must be changed")
 			objBefore.SetResourceVersion(objAfterUpdate.GetResourceVersion())
 			objBefore.Labels = objAfterUpdate.Labels
-			require.Equal(t, objBefore, objAfterUpdate, "everything else must be the same")
+			g.Expect(objBefore).To(Equal(objAfterUpdate), "everything else must be the same")
 
-			require.Contains(t, h.Events(), "foo, CloudMachine=baz, Deleted")
+			g.Expect(h.Events()).To(ContainElement("foo, CloudMachine=baz, Deleted"))
 
 			cancel()
 		})
 
 		t.Run("delete with owner reference", func(t *testing.T) {
+			g := NewWithT(t)
+
 			createMachine(t, c, "foo", "parent3")
 
 			obj := &cloudv1.CloudMachine{
@@ -613,7 +695,7 @@ func Test_cache_client(t *testing.T) {
 				},
 			}
 			err := c.Create("foo", obj)
-			require.NoError(t, err)
+			g.Expect(err).ToNot(HaveOccurred())
 
 			obj = &cloudv1.CloudMachine{
 				ObjectMeta: metav1.ObjectMeta{
@@ -628,7 +710,7 @@ func Test_cache_client(t *testing.T) {
 				},
 			}
 			err = c.Create("foo", obj)
-			require.NoError(t, err)
+			g.Expect(err).ToNot(HaveOccurred())
 
 			obj = &cloudv1.CloudMachine{
 				ObjectMeta: metav1.ObjectMeta{
@@ -636,15 +718,15 @@ func Test_cache_client(t *testing.T) {
 				},
 			}
 			err = c.Delete("foo", obj)
-			require.NoError(t, err)
+			g.Expect(err).ToNot(HaveOccurred())
 
 			c.lock.RLock()
 			defer c.lock.RUnlock()
 
-			require.Contains(t, c.resourceGroups["foo"].objects, cloudv1.GroupVersion.WithKind(cloudv1.CloudMachineKind), "gvk must exist in object tracker for foo")
-			require.NotContains(t, c.resourceGroups["foo"].objects[cloudv1.GroupVersion.WithKind(cloudv1.CloudMachineKind)], types.NamespacedName{Name: "parent3"}, "Object parent3 must not exist in object tracker for foo")
-			require.NotContains(t, c.resourceGroups["foo"].objects[cloudv1.GroupVersion.WithKind(cloudv1.CloudMachineKind)], types.NamespacedName{Name: "child3"}, "Object child3 must not exist in object tracker for foo")
-			require.NotContains(t, c.resourceGroups["foo"].objects[cloudv1.GroupVersion.WithKind(cloudv1.CloudMachineKind)], types.NamespacedName{Name: "grandchild3"}, "Object grandchild3 must not exist in object tracker for foo")
+			g.Expect(c.resourceGroups["foo"].objects).To(HaveKey(cloudv1.GroupVersion.WithKind(cloudv1.CloudMachineKind)), "gvk must exist in object tracker for foo")
+			g.Expect(c.resourceGroups["foo"].objects[cloudv1.GroupVersion.WithKind(cloudv1.CloudMachineKind)]).ToNot(HaveKey(types.NamespacedName{Name: "parent3"}), "Object parent3 must not exist in object tracker for foo")
+			g.Expect(c.resourceGroups["foo"].objects[cloudv1.GroupVersion.WithKind(cloudv1.CloudMachineKind)]).ToNot(HaveKey(types.NamespacedName{Name: "child3"}), "Object child3 must not exist in object tracker for foo")
+			g.Expect(c.resourceGroups["foo"].objects[cloudv1.GroupVersion.WithKind(cloudv1.CloudMachineKind)]).ToNot(HaveKey(types.NamespacedName{Name: "grandchild3"}), "Object grandchild3 must not exist in object tracker for foo")
 		})
 
 		// TODO: test finalizers and ownner references together
@@ -652,13 +734,15 @@ func Test_cache_client(t *testing.T) {
 }
 
 func createMachine(t *testing.T, c *cache, resourceGroup, name string) *cloudv1.CloudMachine {
+	g := NewWithT(t)
+
 	obj := &cloudv1.CloudMachine{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name,
 		},
 	}
 	err := c.Create(resourceGroup, obj)
-	require.NoError(t, err)
+	g.Expect(err).ToNot(HaveOccurred())
 
 	return obj
 }

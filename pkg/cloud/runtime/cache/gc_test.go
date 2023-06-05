@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
+	. "github.com/onsi/gomega"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -30,17 +30,18 @@ import (
 )
 
 func Test_cache_gc(t *testing.T) {
+	g := NewWithT(t)
 	ctx, cancel := context.WithCancel(context.TODO())
 	defer cancel()
 
 	c := NewCache(scheme).(*cache)
 	c.garbageCollectorRequeueAfter = 500 * time.Millisecond // force a shorter gc requeueAfter
 	err := c.Start(ctx)
-	require.NoError(t, err)
+	g.Expect(err).ToNot(HaveOccurred())
 
-	require.Eventually(t, func() bool {
+	g.Eventually(func() bool {
 		return c.started
-	}, 5*time.Second, 200*time.Millisecond, "manager should start")
+	}, 5*time.Second, 200*time.Millisecond).Should(BeTrue(), "manager should start")
 
 	c.AddResourceGroup("foo")
 
@@ -51,34 +52,34 @@ func Test_cache_gc(t *testing.T) {
 		},
 	}
 	err = c.Create("foo", obj)
-	require.NoError(t, err)
+	g.Expect(err).ToNot(HaveOccurred())
 
 	err = c.Delete("foo", obj)
-	require.NoError(t, err)
+	g.Expect(err).ToNot(HaveOccurred())
 
-	require.Never(t, func() bool {
+	g.Consistently(func() bool {
 		if err := c.Get("foo", types.NamespacedName{Name: "baz"}, obj); apierrors.IsNotFound(err) {
 			return true
 		}
 		return false
-	}, 5*time.Second, 200*time.Millisecond, "object with finalizer should never be deleted")
+	}, 5*time.Second, 200*time.Millisecond).Should(BeFalse(), "object with finalizer should never be deleted")
 
 	obj.Finalizers = nil
 	err = c.Update("foo", obj)
-	require.NoError(t, err)
+	g.Expect(err).ToNot(HaveOccurred())
 
-	require.Eventually(t, func() bool {
+	g.Eventually(func() bool {
 		if err := c.Get("foo", types.NamespacedName{Name: "baz"}, obj); apierrors.IsNotFound(err) {
 			return true
 		}
 		return false
-	}, 5*time.Second, 200*time.Millisecond, "object should be garbage collected")
+	}, 5*time.Second, 200*time.Millisecond).Should(BeTrue(), "object should be garbage collected")
 
 	c.lock.RLock()
 	defer c.lock.RUnlock()
 
-	require.Contains(t, c.resourceGroups["foo"].objects, cloudv1.GroupVersion.WithKind(cloudv1.CloudMachineKind), "gvk must exists in object tracker for foo")
-	require.NotContains(t, c.resourceGroups["foo"].objects[cloudv1.GroupVersion.WithKind(cloudv1.CloudMachineKind)], "baz", "object baz must not exist in object tracker for foo")
+	g.Expect(c.resourceGroups["foo"].objects).To(HaveKey(cloudv1.GroupVersion.WithKind(cloudv1.CloudMachineKind)), "gvk must exists in object tracker for foo")
+	g.Expect(c.resourceGroups["foo"].objects[cloudv1.GroupVersion.WithKind(cloudv1.CloudMachineKind)]).ToNot(HaveKey("baz"), "object baz must not exist in object tracker for foo")
 
 	cancel()
 }

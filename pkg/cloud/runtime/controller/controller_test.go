@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
+	. "github.com/onsi/gomega"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -50,6 +50,7 @@ func (r *simpleReconciler) Reconcile(_ context.Context, req creconciler.Request)
 }
 
 func TestController_Queue(t *testing.T) {
+	g := NewWithT(t)
 	ctx, cancelFn := context.WithCancel(context.TODO())
 
 	r := &simpleReconciler{
@@ -60,17 +61,17 @@ func TestController_Queue(t *testing.T) {
 		Concurrency: 1,
 		Reconciler:  r,
 	})
-	require.NoError(t, err)
+	g.Expect(err).ToNot(HaveOccurred())
 
 	i := &fakeInformer{}
 
 	err = c.Watch(&csource.Informer{
 		Informer: i,
 	}, &chandler.EnqueueRequestForObject{})
-	require.NoError(t, err)
+	g.Expect(err).ToNot(HaveOccurred())
 
 	err = c.Start(ctx)
-	require.NoError(t, err)
+	g.Expect(err).ToNot(HaveOccurred())
 
 	i.InformCreate("foo", &cloudv1.CloudMachine{
 		ObjectMeta: metav1.ObjectMeta{
@@ -78,13 +79,13 @@ func TestController_Queue(t *testing.T) {
 		},
 	})
 
-	require.Eventually(t, func() bool {
+	g.Eventually(func() bool {
 		r := <-r.processed
 		return r == creconciler.Request{
 			ResourceGroup:  "foo",
 			NamespacedName: types.NamespacedName{Name: "bar-create"},
 		}
-	}, 5*time.Second, 100*time.Millisecond)
+	}, 5*time.Second, 100*time.Millisecond).Should(BeTrue())
 
 	i.InformUpdate("foo", &cloudv1.CloudMachine{
 		ObjectMeta: metav1.ObjectMeta{
@@ -96,13 +97,13 @@ func TestController_Queue(t *testing.T) {
 		},
 	})
 
-	require.Eventually(t, func() bool {
+	g.Eventually(func() bool {
 		r := <-r.processed
 		return r == creconciler.Request{
 			ResourceGroup:  "foo",
 			NamespacedName: types.NamespacedName{Name: "bar-update"},
 		}
-	}, 5*time.Second, 100*time.Millisecond)
+	}, 5*time.Second, 100*time.Millisecond).Should(BeTrue())
 
 	i.InformDelete("foo", &cloudv1.CloudMachine{
 		ObjectMeta: metav1.ObjectMeta{
@@ -110,13 +111,13 @@ func TestController_Queue(t *testing.T) {
 		},
 	})
 
-	require.Eventually(t, func() bool {
+	g.Eventually(func() bool {
 		r := <-r.processed
 		return r == creconciler.Request{
 			ResourceGroup:  "foo",
 			NamespacedName: types.NamespacedName{Name: "bar-delete"},
 		}
-	}, 5*time.Second, 100*time.Millisecond)
+	}, 5*time.Second, 100*time.Millisecond).Should(BeTrue())
 
 	i.InformGeneric("foo", &cloudv1.CloudMachine{
 		ObjectMeta: metav1.ObjectMeta{
@@ -124,13 +125,13 @@ func TestController_Queue(t *testing.T) {
 		},
 	})
 
-	require.Eventually(t, func() bool {
+	g.Eventually(func() bool {
 		r := <-r.processed
 		return r == creconciler.Request{
 			ResourceGroup:  "foo",
 			NamespacedName: types.NamespacedName{Name: "bar-generic"},
 		}
-	}, 5*time.Second, 100*time.Millisecond)
+	}, 5*time.Second, 100*time.Millisecond).Should(BeTrue())
 
 	close(r.processed)
 	cancelFn()

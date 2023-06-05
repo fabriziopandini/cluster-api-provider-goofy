@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
+	. "github.com/onsi/gomega"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -62,6 +62,7 @@ func (r *simpleReconciler) Reconcile(ctx context.Context, req creconciler.Reques
 }
 
 func TestController_Queue(t *testing.T) {
+	g := NewWithT(t)
 	ctx, cancelFn := context.WithCancel(context.TODO())
 
 	mgr := NewManager(scheme)
@@ -72,10 +73,10 @@ func TestController_Queue(t *testing.T) {
 	err := (&simpleReconciler{
 		mgr: mgr,
 	}).SetupWithManager(ctx, mgr)
-	require.NoError(t, err)
+	g.Expect(err).ToNot(HaveOccurred())
 
 	err = mgr.Start(ctx)
-	require.NoError(t, err)
+	g.Expect(err).ToNot(HaveOccurred())
 
 	obj := &cloudv1.CloudMachine{
 		ObjectMeta: metav1.ObjectMeta{
@@ -83,15 +84,15 @@ func TestController_Queue(t *testing.T) {
 		},
 	}
 	err = c.Create(ctx, obj)
-	require.NoError(t, err)
+	g.Expect(err).ToNot(HaveOccurred())
 
-	require.Eventually(t, func() bool {
+	g.Eventually(func() bool {
 		obj2 := &cloudv1.CloudMachine{}
 		if err := c.Get(ctx, client.ObjectKeyFromObject(obj), obj2); err != nil {
 			return false
 		}
 		return obj2.Annotations["reconciled"] == "true"
-	}, 5*time.Second, 100*time.Millisecond)
+	}, 5*time.Second, 100*time.Millisecond).Should(BeTrue())
 
 	cancelFn()
 }
