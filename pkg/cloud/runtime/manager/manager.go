@@ -28,6 +28,8 @@ import (
 	cresourcegroup "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/resourcegroup"
 )
 
+// Manager initializes shared dependencies such as Caches and Clients, and provides them to Runnables.
+// A Manager is required to create Controllers.
 type Manager interface {
 	// TODO: refactor in resoucegroup.add/delete/get; make delete fail if rs does not exist
 	AddResourceGroup(name string)

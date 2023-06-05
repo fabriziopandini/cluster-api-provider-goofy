@@ -19,7 +19,6 @@ package handler
 import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/workqueue"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	cevent "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/event"
 	creconciler "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/reconcile"
@@ -57,9 +56,6 @@ func (e *EnqueueRequestForObject) Update(evt cevent.UpdateEvent, q workqueue.Rat
 			},
 		})
 	case evt.ObjectOld != nil:
-		if evt.ObjectNew != nil && client.ObjectKeyFromObject(evt.ObjectNew) == client.ObjectKeyFromObject(evt.ObjectOld) {
-			return
-		}
 		q.Add(creconciler.Request{
 			ResourceGroup: evt.ResourceGroup,
 			NamespacedName: types.NamespacedName{

@@ -22,7 +22,7 @@ import (
 	cevent "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/event"
 )
 
-// EventHandler enqueues reconcile.Requests in response to events (e.g. object Create).  EventHandlers map an Event
+// EventHandler enqueues reconcile.Requests in response to events (e.g. object Create). EventHandlers map an Event
 // for one object to trigger Reconciles for either the same object or different objects - e.g. if there is an
 // Event for object with type Foo then reconcile one or more object(s) with type Bar.
 type EventHandler interface {

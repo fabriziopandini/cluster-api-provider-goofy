@@ -24,12 +24,19 @@ import (
 	cmanager "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/manager"
 )
 
+// Client knows how to perform CRUD operations on resources in a resource group.
 type Client cclient.Client
+
 type Object client.Object
 
+// Manager initializes shared dependencies such as Caches and Clients, and provides them to Runnables.
+// A Manager is required to create Controllers.
 type Manager cmanager.Manager
 
 var (
-	NewManager             = cmanager.New
+	// NewManager returns a new Manager for creating Controllers.
+	NewManager = cmanager.New
+
+	// NewControllerManagedBy returns a new controller builder that will be started by the provided Manager.
 	NewControllerManagedBy = cbuilder.ControllerManagedBy
 )

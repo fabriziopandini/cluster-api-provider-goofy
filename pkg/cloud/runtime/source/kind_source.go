@@ -29,32 +29,25 @@ import (
 	cpredicate "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/predicate"
 )
 
-// Kind is used to provide a source of events originating inside the resourceGroup from Watches (e.g. Resource Create).
-type Kind struct {
-	Type     client.Object
+// Informer is used to provide a source of events originating inside the resourceGroup from Watches (e.g. Resource Create).
+type Informer struct {
 	Informer ccache.Informer
 }
 
-var _ Source = &Kind{}
+var _ Source = &Informer{}
 
-// Start implement Source.
-func (ks *Kind) Start(_ context.Context, handler chandler.EventHandler, queue workqueue.RateLimitingInterface, prct ...cpredicate.Predicate) error {
-	if ks.Type == nil {
-		return fmt.Errorf("must specify Kind.Type")
+// Start implements Source.
+func (is *Informer) Start(_ context.Context, handler chandler.EventHandler, queue workqueue.RateLimitingInterface, prct ...cpredicate.Predicate) error {
+	// Informer should have been specified by the user.
+	if is.Informer == nil {
+		return fmt.Errorf("must specify Informer.Informer")
 	}
 
-	if ks.Informer == nil {
-		return fmt.Errorf("must specify Kind.Informer")
-	}
-
-	return ks.Informer.AddEventHandler(informerEventHandler{Queue: queue, EventHandler: handler, Predicates: prct})
+	return is.Informer.AddEventHandler(informerEventHandler{Queue: queue, EventHandler: handler, Predicates: prct})
 }
 
-func (ks *Kind) String() string {
-	if ks.Type != nil {
-		return fmt.Sprintf("kind source: %T", ks.Type)
-	}
-	return "kind source: unknown type"
+func (is *Informer) String() string {
+	return fmt.Sprintf("informer source: %p", is.Informer)
 }
 
 var _ ccache.InformEventHandler = informerEventHandler{}

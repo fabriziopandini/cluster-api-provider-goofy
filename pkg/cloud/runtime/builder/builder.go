@@ -18,6 +18,7 @@ package builder
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -33,6 +34,7 @@ import (
 	csource "github.com/fabriziopandini/cluster-api-provider-goofy/pkg/cloud/runtime/source"
 )
 
+// Builder builds a Controller.
 type Builder struct {
 	forInput         ForInput
 	watchesInput     []WatchesInput
@@ -43,22 +45,26 @@ type Builder struct {
 	name             string
 }
 
+// ControllerManagedBy returns a new controller builder that will be started by the provided Manager.
 func ControllerManagedBy(m cmanager.Manager) *Builder {
 	return &Builder{mgr: m}
 }
 
+// ForInput represents the information set by For method.
 type ForInput struct {
 	object     client.Object
 	predicates []cpredicate.Predicate
 	err        error
 }
 
-func (blder *Builder) For(obj client.Object, opts ...ForOption) *Builder {
+// For defines the type of Object being *reconciled*, and configures the ControllerManagedBy to respond to create / delete /
+// update events by *reconciling the object*.
+func (blder *Builder) For(object client.Object, opts ...ForOption) *Builder {
 	if blder.forInput.object != nil {
-		blder.forInput.err = fmt.Errorf("method For(...) should only be called once, could not assign multiple object for reconciliation")
+		blder.forInput.err = fmt.Errorf("method For(...) should only be called once, could not assign multiple objects for reconciliation")
 		return blder
 	}
-	input := ForInput{object: obj}
+	input := ForInput{object: object}
 	for _, opt := range opts {
 		opt.ApplyToFor(&input)
 	}
@@ -67,12 +73,15 @@ func (blder *Builder) For(obj client.Object, opts ...ForOption) *Builder {
 	return blder
 }
 
+// WatchesInput represents the information set by Watches method.
 type WatchesInput struct {
 	src          csource.Source
 	eventhandler handler.EventHandler
 	predicates   []cpredicate.Predicate
 }
 
+// Watches defines the type of Object to watch, and configures the ControllerManagedBy to respond to create / delete /
+// update events by *reconciling the object* with the given EventHandler.
 func (blder *Builder) Watches(src csource.Source, eventhandler handler.EventHandler, opts ...WatchesOption) *Builder {
 	input := WatchesInput{src: src, eventhandler: eventhandler}
 	for _, opt := range opts {
@@ -83,26 +92,38 @@ func (blder *Builder) Watches(src csource.Source, eventhandler handler.EventHand
 	return blder
 }
 
+// WithEventFilter sets the event filters, to filter which create/update/delete/generic events eventually
+// trigger reconciliations.  For example, filtering on whether the resource version has changed.
+// Given predicate is added for all watched objects.
+// Defaults to the empty list.
 func (blder *Builder) WithEventFilter(p cpredicate.Predicate) *Builder {
 	blder.globalPredicates = append(blder.globalPredicates, p)
 	return blder
 }
 
+// WithOptions overrides the controller options use in doController. Defaults to empty.
 func (blder *Builder) WithOptions(options ccontroller.Options) *Builder {
 	blder.ctrlOptions = options
 	return blder
 }
 
+// Named sets the name of the controller to the given name.  The name shows up
+// in metrics, among other things, and thus should be a prometheus compatible name
+// (underscores and alphanumeric characters only).
+//
+// By default, controllers are named using the lowercase version of their kind.
 func (blder *Builder) Named(name string) *Builder {
 	blder.name = name
 	return blder
 }
 
+// Complete builds the Application Controller.
 func (blder *Builder) Complete(r creconciler.Reconciler) error {
 	_, err := blder.Build(r)
 	return err
 }
 
+// Build builds the Application Controller and returns the Controller it created.
 func (blder *Builder) Build(r creconciler.Reconciler) (ccontroller.Controller, error) {
 	if r == nil {
 		return nil, fmt.Errorf("must provide a non-nil Reconciler")
@@ -135,7 +156,7 @@ func (blder *Builder) doWatch() error {
 			return err
 		}
 
-		src := &csource.Kind{Type: blder.forInput.object, Informer: i}
+		src := &csource.Informer{Type: blder.forInput.object, Informer: i}
 		hdler := &handler.EnqueueRequestForObject{}
 		allPredicates := append(blder.globalPredicates, blder.forInput.predicates...)
 		if err := blder.ctrl.Watch(src, hdler, allPredicates...); err != nil {
@@ -145,7 +166,7 @@ func (blder *Builder) doWatch() error {
 
 	// Do the watch requests
 	if len(blder.watchesInput) == 0 && blder.forInput.object == nil {
-		return fmt.Errorf("there are no watches configured, controller will never get triggered. Use For(), Owns() or Watches() to set them up")
+		return errors.New("there are no watches configured, controller will never get triggered. Use For(), Owns() or Watches() to set them up")
 	}
 	for _, w := range blder.watchesInput {
 		allPredicates := append([]cpredicate.Predicate(nil), blder.globalPredicates...)
@@ -163,7 +184,7 @@ func (blder *Builder) getControllerName(gvk schema.GroupVersionKind, hasGVK bool
 		return blder.name, nil
 	}
 	if !hasGVK {
-		return "", fmt.Errorf("one of For() or Named() must be called")
+		return "", errors.New("one of For() or Named() must be called")
 	}
 	return strings.ToLower(gvk.Kind), nil
 }
@@ -172,10 +193,6 @@ func (blder *Builder) doController(r creconciler.Reconciler) error {
 	ctrlOptions := blder.ctrlOptions
 	if ctrlOptions.Reconciler == nil {
 		ctrlOptions.Reconciler = r
-	}
-
-	if ctrlOptions.Concurrency <= 0 {
-		ctrlOptions.Concurrency = 1
 	}
 
 	var gvk schema.GroupVersionKind
@@ -188,17 +205,23 @@ func (blder *Builder) doController(r creconciler.Reconciler) error {
 		}
 	}
 
+	// Setup concurrency.
+	if ctrlOptions.Concurrency <= 0 {
+		ctrlOptions.Concurrency = 1
+	}
+
 	controllerName, err := blder.getControllerName(gvk, hasGVK)
 	if err != nil {
 		return err
 	}
 
-	// Build the controller and return.
+	// Build the controller.
 	blder.ctrl, err = ccontroller.New(controllerName, ctrlOptions)
 	if err != nil {
 		return err
 	}
 
+	// Add the controller to the Manager.
 	if err := blder.mgr.AddController(blder.ctrl); err != nil {
 		return err
 	}
